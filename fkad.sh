@@ -54,62 +54,102 @@ fi
 DOMAIN_DN=$(echo "$DOMAIN" | sed 's/\./,DC=/g' | sed 's/^/DC=/')
 FULL_USER="$USERNAME@$DOMAIN"
 
-# Get current directory for output files
+# Get current directory and create output folder
 CURRENT_PATH=$(pwd)
+OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$OUTPUT_DIR"
 
 echo -e "${BLUE}[*] Target    : $DC_IP${NC}"
 echo -e "${BLUE}[*] Domain    : $DOMAIN${NC}"
 echo -e "${BLUE}[*] Username  : $USERNAME${NC}"
+echo -e "${BLUE}[*] Output    : $OUTPUT_DIR${NC}"
 echo ""
 
 # Create domain_users.txt
-nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --active-users > "$CURRENT_PATH/active.txt" 2>/dev/null
-if [ -f "$CURRENT_PATH/active.txt" ]; then
-  tail "$CURRENT_PATH/active.txt" -n +5 | awk -F ' ' '{ print $5 }' > "$CURRENT_PATH/domain_users.txt"
-  USER_COUNT=$(wc -l < "$CURRENT_PATH/domain_users.txt" 2>/dev/null)
+nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --active-users > "$OUTPUT_DIR/active.txt" 2>/dev/null
+if [ -f "$OUTPUT_DIR/active.txt" ]; then
+  tail "$OUTPUT_DIR/active.txt" -n +5 | awk -F ' ' '{ print $5 }' > "$OUTPUT_DIR/domain_users.txt"
+  USER_COUNT=$(wc -l < "$OUTPUT_DIR/domain_users.txt" 2>/dev/null)
   echo -e "${GREEN}[OK] Enumerated $USER_COUNT active users → domain_users.txt${NC}"
-  rm -f "$CURRENT_PATH/active.txt"
+  rm -f "$OUTPUT_DIR/active.txt"
 else
-  echo -e "${RED}[KO] Failed to enumerate users${NC}"
+  echo -e "${RED}[??] Failed to enumerate users${NC}"
 fi
 
 # Enumerate users with descriptions
 DESC_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
   "(&(objectClass=user)(description=*))" sAMAccountName description 2>/dev/null)
-
 if [ ! -z "$DESC_OUTPUT" ]; then
-  # Parse output and format as "username: description"
   echo "$DESC_OUTPUT" | grep -A1 "^sAMAccountName:" | grep -v "^--$" | \
     sed 'N;s/sAMAccountName: \(.*\)\ndescription: \(.*\)/\1: \2/' | \
-    grep -v "^sAMAccountName:" > "$CURRENT_PATH/user_descriptions.txt"
+    grep -v "^sAMAccountName:" > "$OUTPUT_DIR/user_descriptions.txt"
   
-  DESC_COUNT=$(grep -c ":" "$CURRENT_PATH/user_descriptions.txt" 2>/dev/null)
+  DESC_COUNT=$(grep -c ":" "$OUTPUT_DIR/user_descriptions.txt" 2>/dev/null)
   if [ "$DESC_COUNT" -gt 0 ]; then
     echo -e "${GREEN}[OK] Enumerated $DESC_COUNT users with descriptions → user_descriptions.txt${NC}"
   else
-    echo -e "${GREY}[--] No users with descriptions found${NC}"
-    rm -f "$CURRENT_PATH/user_descriptions.txt"
+    echo -e "${GREEN}[OK] No users with descriptions found${NC}"
+    rm -f "$OUTPUT_DIR/user_descriptions.txt"
   fi
 else
-  echo -e "${RED}[KO] Failed to enumerate user descriptions${NC}"
+  echo -e "${RED}[??] Failed to enumerate user descriptions${NC}"
 fi
 
 # Bloodhound Export
 if command -v bloodhound-python &> /dev/null || command -v bloodhound.py &> /dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
   
-  echo -e "${GREY}[→] Running Bloodhound collection...${NC}"
+  cd "$OUTPUT_DIR"
   $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "$DOMAIN" -ns "$DC_IP" -c All --zip &>/dev/null
+  cd "$CURRENT_PATH"
   
   # Check if bloodhound files were created
-  BH_FILES=$(ls -1 ${CURRENT_PATH}/*bloodhound*.zip 2>/dev/null | wc -l)
+  BH_FILES=$(ls -1 ${OUTPUT_DIR}/*bloodhound*.zip 2>/dev/null | wc -l)
   if [ "$BH_FILES" -gt 0 ]; then
-    BH_ZIP=$(ls -1t ${CURRENT_PATH}/*bloodhound*.zip 2>/dev/null | head -1 | xargs basename)
+    BH_ZIP=$(ls -1t ${OUTPUT_DIR}/*bloodhound*.zip 2>/dev/null | head -1 | xargs basename)
     echo -e "${GREEN}[OK] Bloodhound export complete → $BH_ZIP${NC}"
+    
+    # Create owned.txt for GriffonAD
+    echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned.txt"
+    
+    # Check/Install GriffonAD
+    GRIFFON_PATH="/workspace/GriffonAD"
+    if [ ! -d "$GRIFFON_PATH" ]; then
+      echo -e "${GREY}[→] Installing GriffonAD...${NC}"
+      cd /workspace
+      git clone https://github.com/shellinvictus/GriffonAD &>/dev/null 2>&1
+      if [ -d "$GRIFFON_PATH" ]; then
+        cd "$GRIFFON_PATH"
+        pip install -r requirements.txt &>/dev/null 2>&1
+        cd "$CURRENT_PATH"
+        echo -e "${GREEN}[OK] GriffonAD installed${NC}"
+      else
+        echo -e "${RED}[KO] Failed to install GriffonAD${NC}"
+      fi
+    fi
+    
+    # Run GriffonAD
+    if [ -f "$GRIFFON_PATH/griffon.py" ]; then
+      echo -e "${GREY}[→] Running GriffonAD analysis...${NC}"
+      cd "$OUTPUT_DIR"
+      GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" *.json --fromo 2>&1)
+      cd "$CURRENT_PATH"
+      
+      if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
+        echo -e "${GREY}[--] GriffonAD: No attack paths found${NC}"
+      elif echo "$GRIFFON_OUTPUT" | grep -q "->"; then
+        PATHS=$(echo "$GRIFFON_OUTPUT" | grep -c "->")
+        echo -e "${GREEN}[OK] GriffonAD found $PATHS attack path(s)${NC}"
+        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
+      else
+        echo -e "${GREY}[--] GriffonAD analysis complete${NC}"
+      fi
+    fi
+    
   else
     # Check for individual JSON files
-    BH_JSON=$(ls -1 ${CURRENT_PATH}/*_*.json 2>/dev/null | wc -l)
+    BH_JSON=$(ls -1 ${OUTPUT_DIR}/*_*.json 2>/dev/null | wc -l)
     if [ "$BH_JSON" -gt 0 ]; then
       echo -e "${GREEN}[OK] Bloodhound data exported → ${BH_JSON} JSON files${NC}"
     else
@@ -241,7 +281,7 @@ SPOOLER_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M spooler 2>/dev/n
 if echo "$SPOOLER_CHECK" | grep -qi "STATUS_PIPE_NOT_AVAILABLE"; then
   echo -e "${GREEN}[OK] Print Spooler disabled on DC${NC}"
 elif echo "$SPOOLER_CHECK" | grep -qi "Spooler.*enabled\|TRUE"; then
-  echo -e "${RED}[KO] Print Spooler running on DC (PrintNightmare possible)${NC}"
+  echo -e "${RED}[KO] Print Spooler running on DC${NC}"
 else
   echo -e "${GREY}[--] Print Spooler status unknown${NC}"
 fi
