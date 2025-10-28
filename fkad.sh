@@ -136,7 +136,7 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
       if [ -e "${JSON_FILES[0]}" ]; then
         GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" "${JSON_FILES[@]}" --fromo 2>&1)
         if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
-          echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
+          echo -e "${GREEN}[OK] GriffonAD found no attack paths - python3 '$GRIFFON_PATH/griffon.py' '$OUTPUT_DIR/'*.json${NC}"
         elif echo "$GRIFFON_OUTPUT" | grep -q -- "->"; then
           PATHS=$(echo "$GRIFFON_OUTPUT" | grep -c -- "->")
           echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s)${NC}"
