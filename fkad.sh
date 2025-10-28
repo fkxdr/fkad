@@ -136,7 +136,7 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
       if [ -e "${JSON_FILES[0]}" ]; then
         GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" "${JSON_FILES[@]}" --fromo 2>&1)
         if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
-          echo -e "${Green}[OK] GriffonAD found no attack paths${NC}"
+          echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
         elif echo "$GRIFFON_OUTPUT" | grep -q -- "->"; then
           PATHS=$(echo "$GRIFFON_OUTPUT" | grep -c -- "->")
           echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s)${NC}"
@@ -290,10 +290,10 @@ fi
 if [ "$LOCKOUT_THRESHOLD" = "unknown" ]; then
   echo -e "${GREY}[--] Account Lockout Threshold: unknown${NC}"
 else
-  if [ "$LOCKOUT_THRESHOLD" -ge 4 ] 2>/dev/null; then
-    echo -e "${RED}[KO] Account Lockout Threshold: $LOCKOUT_THRESHOLD (>=4)${NC}"
+  if [ "$LOCKOUT_THRESHOLD" -ge 5 ] 2>/dev/null; then
+    echo -e "${GREEN}[OK] Account Lockout Threshold: $LOCKOUT_THRESHOLD (>=5)${NC}"
   else
-    echo -e "${GREEN}[OK] Account Lockout Threshold: $LOCKOUT_THRESHOLD (<5)${NC}"
+    echo -e "${RED}[KO] Account Lockout Threshold: $LOCKOUT_THRESHOLD (<5)${NC}"
   fi
 fi
 echo -e "${GREY}[--] kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
