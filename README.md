@@ -64,7 +64,3 @@ Built to glue common AD tooling and automate mundane enumeration tasks:
 * Certipy (ADCS checks)
 * krbrelayx (DNS tests)
 * kerbrute (password spraying helper)
-
----
-
-If you want a trimmed one‑page README or different thresholds/language, say so and I’ll update it.
