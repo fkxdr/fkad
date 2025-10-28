@@ -54,14 +54,21 @@ fi
 DOMAIN_DN=$(echo "$DOMAIN" | sed 's/\./,DC=/g' | sed 's/^/DC=/')
 FULL_USER="$USERNAME@$DOMAIN"
 
+# Hostname DC
+DC_HOSTNAME=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null | grep -oP '(?<=server:)[^)]+' | tr -d ' ')
+if [ -z "$DC_HOSTNAME" ]; then
+    # fallback auf Reverse DNS Lookup
+    DC_HOSTNAME=$(dig +short -x $DC_IP 2>/dev/null | sed 's/\.$//')
+fi
+
 # Get current directory and create output folder
 CURRENT_PATH=$(pwd)
 OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUTPUT_DIR"
 
-echo -e "${BLUE}[*] Target    : $DC_IP${NC}"
+echo -e "${BLUE}[*] DC Host   : ${DC_HOSTNAME:-unknown}${NC}"
+echo -e "${BLUE}[*] DC IP     : $DC_IP${NC}"
 echo -e "${BLUE}[*] Domain    : $DOMAIN${NC}"
-echo -e "${BLUE}[*] Username  : $USERNAME${NC}"
 echo -e "${BLUE}[*] Output    : $OUTPUT_DIR${NC}"
 echo ""
 
@@ -73,7 +80,7 @@ if [ -f "$OUTPUT_DIR/active.txt" ]; then
   echo -e "${GREEN}[OK] Enumerated $USER_COUNT active users → domain_users.txt${NC}"
   rm -f "$OUTPUT_DIR/active.txt"
 else
-  echo -e "${RED}[??] Failed to enumerate users${NC}"
+  echo -e "${GREY}[??] Failed to enumerate users${NC}"
 fi
 
 # Enumerate users with descriptions
@@ -93,26 +100,21 @@ if [ ! -z "$DESC_OUTPUT" ]; then
     rm -f "$OUTPUT_DIR/user_descriptions.txt"
   fi
 else
-  echo -e "${RED}[??] Failed to enumerate user descriptions${NC}"
+  echo -e "${GREY}[??] Failed to enumerate user descriptions${NC}"
 fi
 
 # Bloodhound Export
-if command -v bloodhound-python &> /dev/null || command -v bloodhound.py &> /dev/null; then
+if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
-  
-  cd "$OUTPUT_DIR"
-  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "$DOMAIN" -ns "$DC_IP" -c All --zip &>/dev/null
-  cd "$CURRENT_PATH"
-  
-  # Check if bloodhound files were created
-  BH_FILES=$(ls -1 ${OUTPUT_DIR}/*bloodhound*.zip 2>/dev/null | wc -l)
-  if [ "$BH_FILES" -gt 0 ]; then
-    BH_ZIP=$(ls -1t ${OUTPUT_DIR}/*bloodhound*.zip 2>/dev/null | head -1 | xargs basename)
-    echo -e "${GREEN}[OK] Bloodhound export complete → $BH_ZIP${NC}"
-    
-    # Create owned.txt for GriffonAD
+  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "$DOMAIN" -ns "$DC_IP" -c All &>/dev/null
+
+  # Check for BloodHound JSONs
+  BH_JSON=$(ls -1 ${CURRENT_PATH}/*.json 2>/dev/null | wc -l)
+  if [ "$BH_JSON" -gt 0 ]; then
+    mv ${CURRENT_PATH}/*.json "$OUTPUT_DIR/" 2>/dev/null
     echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned.txt"
-    
+        echo -e "${GREEN}[OK] Bloodhound and owned.txt complete → ${BH_JSON} JSON file(s)${NC}"
+
     # Check/Install GriffonAD
     GRIFFON_PATH="/workspace/GriffonAD"
     if [ ! -d "$GRIFFON_PATH" ]; then
@@ -124,44 +126,37 @@ if command -v bloodhound-python &> /dev/null || command -v bloodhound.py &> /dev
         pip install -r requirements.txt &>/dev/null 2>&1
         cd "$CURRENT_PATH"
         echo -e "${GREEN}[OK] GriffonAD installed${NC}"
-      else
-        echo -e "${RED}[KO] Failed to install GriffonAD${NC}"
       fi
     fi
-    
+
     # Run GriffonAD
     if [ -f "$GRIFFON_PATH/griffon.py" ]; then
-      echo -e "${GREY}[→] Running GriffonAD analysis...${NC}"
       cd "$OUTPUT_DIR"
-      GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" *.json --fromo 2>&1)
-      cd "$CURRENT_PATH"
-      
-      if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
-        echo -e "${GREY}[--] GriffonAD: No attack paths found${NC}"
-      elif echo "$GRIFFON_OUTPUT" | grep -q "->"; then
-        PATHS=$(echo "$GRIFFON_OUTPUT" | grep -c "->")
-        echo -e "${GREEN}[OK] GriffonAD found $PATHS attack path(s)${NC}"
-        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
+      JSON_FILES=( *.json )
+      if [ -e "${JSON_FILES[0]}" ]; then
+        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" "${JSON_FILES[@]}" --fromo 2>&1)
+        if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
+          echo -e "${Green}[OK] GriffonAD found no attack paths${NC}"
+        elif echo "$GRIFFON_OUTPUT" | grep -q -- "->"; then
+          PATHS=$(echo "$GRIFFON_OUTPUT" | grep -c -- "->")
+          echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s)${NC}"
+          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
+        fi
       else
-        echo -e "${GREY}[--] GriffonAD analysis complete${NC}"
+        echo -e "${GREY}[--] No JSON files found for GriffonAD${NC}"
       fi
-    fi
-    
-  else
-    # Check for individual JSON files
-    BH_JSON=$(ls -1 ${OUTPUT_DIR}/*_*.json 2>/dev/null | wc -l)
-    if [ "$BH_JSON" -gt 0 ]; then
-      echo -e "${GREEN}[OK] Bloodhound data exported → ${BH_JSON} JSON files${NC}"
+      cd "$CURRENT_PATH"
     else
-      echo -e "${RED}[KO] Bloodhound export failed${NC}"
+      echo -e "${GREY}[--] GriffonAD not found${NC}"
     fi
+  else
+    echo -e "${GREY}[--] BloodHound export failed${NC}"
   fi
 else
   echo -e "${GREY}[--] Bloodhound-python not found, skipping collection${NC}"
 fi
 
 echo ""
-
 # ADCS/PKI Vulnerability Check
 if command -v certipy &> /dev/null; then
   CERTIPY_CMD="certipy"
@@ -220,44 +215,6 @@ else
   echo -e "${RED}[KO] SMB Signing NOT enforced${NC}"
 fi
 
-# DNS Create Rights (with dnstool.py)
-KRBRELAYX_PATH="/workspace/krbrelayx"
-TEST_RECORD="pentest-$(date +%s)"
-if [ -f "$KRBRELAYX_PATH/dnstool.py" ]; then
-  DNS_TEST=$(python3 $KRBRELAYX_PATH/dnstool.py -u "$DOMAIN\\$USERNAME" -p "$PASSWORD" \
-    $DC_IP -a add -r "$TEST_RECORD" -d 1.1.1.1 2>&1)
-  
-  if echo "$DNS_TEST" | grep -q "completed successfully"; then
-    echo -e "${RED}[KO] User can create DNS records${NC}"
-    # Cleanup
-    python3 $KRBRELAYX_PATH/dnstool.py -u "$DOMAIN\\$USERNAME" -p "$PASSWORD" \
-      $DC_IP -a remove -r "$TEST_RECORD" &>/dev/null
-  else
-    echo -e "${GREEN}[OK] DNS record creation restricted${NC}"
-  fi
-else
-  # Try to install krbrelayx if not found
-  if [ ! -d "$KRBRELAYX_PATH" ]; then
-    cd /workspace && git clone https://github.com/dirkjanm/krbrelayx &>/dev/null 2>&1
-    if [ -f "$KRBRELAYX_PATH/dnstool.py" ]; then
-      DNS_TEST=$(python3 $KRBRELAYX_PATH/dnstool.py -u "$DOMAIN\\$USERNAME" -p "$PASSWORD" \
-        $DC_IP -a add -r "$TEST_RECORD" -d 1.1.1.1 2>&1)
-      
-      if echo "$DNS_TEST" | grep -q "completed successfully"; then
-        echo -e "${RED}[KO] User can create DNS records${NC}"
-        python3 $KRBRELAYX_PATH/dnstool.py -u "$DOMAIN\\$USERNAME" -p "$PASSWORD" \
-          $DC_IP -a remove -r "$TEST_RECORD" &>/dev/null
-      else
-        echo -e "${GREEN}[OK] DNS record creation restricted${NC}"
-      fi
-    else
-      echo -e "${GREY}[--] DNS check skipped (dnstool.py not available)${NC}"
-    fi
-  else
-    echo -e "${GREY}[--] DNS check skipped (dnstool.py not found)${NC}"
-  fi
-fi
-
 # Unconstrained Delegation
 UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
@@ -269,19 +226,19 @@ if [ "$UNCON_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $UNCON_COUNT system(s) with Unconstrained Delegation${NC}"
   while IFS= read -r system; do
     if [ ! -z "$system" ]; then
-      echo -e "${RED}    └─ $system${NC}"
+      echo -e "${RED}       └─ $system${NC}"
     fi
   done <<< "$UNCON_SYSTEMS"
 else
   echo -e "${GREEN}[OK] No Unconstrained Delegation found${NC}"
 fi
 
-# Print Spooler Check on DCs
+# Print Spooler Check on DC
 SPOOLER_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M spooler 2>/dev/null)
 if echo "$SPOOLER_CHECK" | grep -qi "STATUS_PIPE_NOT_AVAILABLE"; then
   echo -e "${GREEN}[OK] Print Spooler disabled on DC${NC}"
 elif echo "$SPOOLER_CHECK" | grep -qi "Spooler.*enabled\|TRUE"; then
-  echo -e "${RED}[KO] Print Spooler running on DC${NC}"
+  echo -e "${RED}[KO] Print Spooler running on DC $DC_HOSTNAME${NC}"
 else
   echo -e "${GREY}[--] Print Spooler status unknown${NC}"
 fi
@@ -309,3 +266,36 @@ if [ ! -z "$MAQ" ]; then
 else
   echo -e "${GREY}[--] Could not determine MachineAccountQuota${NC}"
 fi
+
+echo ""
+
+# Password policy
+POL_OUT=$(nxc smb "$DC_IP" -u "$USERNAME" -p "$PASSWORD" --pass-pol 2>/dev/null)
+
+MIN_PW_LENGTH=$(echo "$POL_OUT" | grep -i 'Minimum password length' | awk -F: '{print $2}' | tr -d ' ' )
+LOCKOUT_THRESHOLD=$(echo "$POL_OUT" | grep -i 'Account Lockout Threshold' | awk -F: '{print $2}' | tr -d ' ' )
+[ -z "$MIN_PW_LENGTH" ] && MIN_PW_LENGTH="unknown"
+[ -z "$LOCKOUT_THRESHOLD" ] && LOCKOUT_THRESHOLD="unknown"
+
+if [ "$MIN_PW_LENGTH" = "unknown" ]; then
+  echo -e "${GREY}[--] Minimum password length: unknown${NC}"
+else
+  if [ "$MIN_PW_LENGTH" -lt 8 ] 2>/dev/null; then
+    echo -e "${RED}[KO] Minimum password length: $MIN_PW_LENGTH (<14)${NC}"
+  else
+    echo -e "${GREEN}[OK] Minimum password length: $MIN_PW_LENGTH${NC}"
+  fi
+fi
+
+if [ "$LOCKOUT_THRESHOLD" = "unknown" ]; then
+  echo -e "${GREY}[--] Account Lockout Threshold: unknown${NC}"
+else
+  if [ "$LOCKOUT_THRESHOLD" -ge 4 ] 2>/dev/null; then
+    echo -e "${RED}[KO] Account Lockout Threshold: $LOCKOUT_THRESHOLD (>=4)${NC}"
+  else
+    echo -e "${GREEN}[OK] Account Lockout Threshold: $LOCKOUT_THRESHOLD (<5)${NC}"
+  fi
+fi
+echo -e "${GREY}[--] kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
+
+echo ""
