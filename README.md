@@ -1,6 +1,7 @@
 # fkad
 
-![fkad screenshot](https://github.com/user-attachments/assets/8fa1fc4b-43c1-4789-8184-0138bd81d0b1)
+![fkad](https://github.com/user-attachments/assets/b1e3375e-75f1-46e2-9616-4c469f9fe5b1)
+
 
 `fkad` is a small offensive helper script designed for Exegol docker containers and pentesting instances. It automates common enumeration and sanity checks and prepares artifacts for follow-up toolkits.
 
