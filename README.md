@@ -59,3 +59,4 @@ Built to glue common AD tooling and automate mundane enumeration tasks:
 * Certipy (ADCS checks)
 * krbrelayx (DNS tests)
 * kerbrute (password spraying helper)
+* (Ghost SPNs - Semperis)<https://www.semperis.com/blog/exploiting-ghost-spns-and-kerberos-reflection-for-smb-server-privilege-elevation>
