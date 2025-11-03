@@ -54,9 +54,9 @@ This tool is for authorized security testing, research, and defensive validation
 
 Built to glue common AD tooling and automate mundane enumeration tasks:
 
+* [Ghost SPNs - Semperis](https://www.semperis.com/blog/exploiting-ghost-spns-and-kerberos-reflection-for-smb-server-privilege-elevation)
 * BloodHound / bloodhound-python
 * GriffonAD (for attack path analysis)
 * Certipy (ADCS checks)
 * krbrelayx (DNS tests)
-* kerbrute (password spraying helper)
-* (Ghost SPNs - Semperis)<https://www.semperis.com/blog/exploiting-ghost-spns-and-kerberos-reflection-for-smb-server-privilege-elevation>
+* [kebrute - ropnop](https://github.com/ropnop/kerbrute)
