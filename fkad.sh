@@ -289,6 +289,38 @@ else
   echo -e "${GREY}[--] Could not check for Ghost SPNs${NC}"
 fi
 
+
+# Kerberoasting Check
+echo ""
+KERBEROAST_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --kerberoasting "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
+KERBEROAST_COUNT=$(grep -c '$krb5tgs$' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null || echo 0)
+
+if [ "$KERBEROAST_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $KERBEROAST_COUNT Kerberoastable account(s) found → kerberoast.txt${NC}"
+  grep -oP '(?<=\*)[^$]+(?=\$)' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null | while read -r account; do
+    echo -e "${RED}       └─ $account${NC}"
+  done
+  echo -e "${GREY}       hashcat -m 13100 kerberoast.txt wordlist.txt${NC}"
+else
+  echo -e "${GREEN}[OK] No Kerberoastable accounts found${NC}"
+  rm -f "$OUTPUT_DIR/kerberoast.txt"
+fi
+
+# AS-REP Roasting Check
+ASREP_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --asreproast "$OUTPUT_DIR/asrep.txt" 2>/dev/null)
+ASREP_COUNT=$(grep -c '$krb5asrep$' "$OUTPUT_DIR/asrep.txt" 2>/dev/null || echo 0)
+
+if [ "$ASREP_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $ASREP_COUNT AS-REP roastable account(s) found → asrep.txt${NC}"
+  grep -oP '(?<=\$)[^@]+(?=@)' "$OUTPUT_DIR/asrep.txt" 2>/dev/null | while read -r account; do
+    echo -e "${RED}       └─ $account${NC}"
+  done
+  echo -e "${GREY}       hashcat -m 18200 asrep.txt wordlist.txt${NC}"
+else
+  echo -e "${GREEN}[OK] No AS-REP roastable accounts found${NC}"
+  rm -f "$OUTPUT_DIR/asrep.txt"
+fi
+
 # MachineAccountQuota Check
 echo ""
 MAQ=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
