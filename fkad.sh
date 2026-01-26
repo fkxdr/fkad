@@ -204,19 +204,19 @@ else
   echo -e "${GREY}[--] Certipy not found, skipping ADCS check${NC}"
 fi
 
-# LDAP Signing
+# LDAP Signing & Channel Binding
 LDAP_CHECK=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
-if echo "$LDAP_CHECK" | grep -q "signing:None"; then
-  echo -e "${RED}[KO] LDAP Signing NOT enforced (NTLM Relay to LDAP might be possible)${NC}"
-else
-  echo -e "${GREEN}[OK] LDAP Signing enforced${NC}"
-fi
+LDAP_SIGNING_OFF=$(echo "$LDAP_CHECK" | grep -q "signing:None" && echo "1")
+LDAP_CB_OFF=$(echo "$LDAP_CHECK" | grep -q "channel binding:No" && echo "1")
 
-# LDAP Channel Binding
-if echo "$LDAP_CHECK" | grep -q "channel binding:No"; then
-  echo -e "${RED}[KO] LDAP Channel Binding missing${NC}"
+if [ "$LDAP_SIGNING_OFF" = "1" ] && [ "$LDAP_CB_OFF" = "1" ]; then
+  echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced (NTLM Relay to LDAP possible)${NC}"
+elif [ "$LDAP_SIGNING_OFF" = "1" ]; then
+  echo -e "${RED}[KO] LDAP Signing NOT enforced (but Channel Binding is)${NC}"
+elif [ "$LDAP_CB_OFF" = "1" ]; then
+  echo -e "${RED}[KO] LDAP Channel Binding missing (but Signing enforced)${NC}"
 else
-  echo -e "${GREEN}[OK] LDAP Channel Binding configured${NC}"
+  echo -e "${GREEN}[OK] LDAP Signing + Channel Binding enforced${NC}"
 fi
 
 # SMB Signing
