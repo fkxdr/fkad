@@ -177,6 +177,13 @@ else
   echo -e "${GREY}[--] Bloodhound-python not found, skipping collection${NC}"
 fi
 
+# Bloodhound Info (ZIP for BloodHound CE)
+CONTAINER_NAME=$(hostname)
+cd "$OUTPUT_DIR"
+zip -q bloodhound.zip *.json
+cd "$CURRENT_PATH"
+echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
+
 echo ""
 # ADCS/PKI Vulnerability Check
 if command -v certipy &> /dev/null; then
