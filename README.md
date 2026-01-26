@@ -10,7 +10,7 @@
 ```bash
 wget https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.sh
 chmod +x fkad.sh
-./fkad.sh -u <user> -p '<password>' -d <dc-ip>
+./fkad.sh -u <user> -p '<password>' -d <dc-ip/domain.com>
 ```
 
 <img width="2208" height="1166" alt="screen" src="https://github.com/user-attachments/assets/c5742863-ab7e-400a-a386-f3556759f57c" />
