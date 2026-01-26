@@ -339,9 +339,7 @@ else
   echo -e "${GREY}[--] Could not check for Ghost SPNs${NC}"
 fi
 
-
 # Kerberoasting Check
-echo ""
 KERBEROAST_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --kerberoasting "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
 KERBEROAST_COUNT=$(grep -c '\$krb5tgs\$' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
 KERBEROAST_COUNT=${KERBEROAST_COUNT:-0}
@@ -351,7 +349,7 @@ if [ "$KERBEROAST_COUNT" -gt 0 ]; then
   grep -oP '(?<=\*)[^$]+(?=\$)' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null | while read -r account; do
     echo -e "${RED}       └─ $account${NC}"
   done
-  echo -e "${GREY}       hashcat -m 13100 kerberoast.txt wordlist.txt${NC}"
+  echo -e "${GREY}       hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt${NC}"
 else
   echo -e "${GREEN}[OK] No Kerberoastable accounts found${NC}"
   rm -f "$OUTPUT_DIR/kerberoast.txt"
