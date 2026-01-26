@@ -40,13 +40,15 @@ if [ ! -z "$DC_IP" ] && ! [[ "$DC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; th
   
   # Hole PDC via SRV Record
   PDC_HOST=$(dig +short SRV _ldap._tcp.pdc._msdcs.$DOMAIN_INPUT 2>/dev/null | awk '{print $4}' | sed 's/\.$//')
+  
   if [ ! -z "$PDC_HOST" ]; then
     DC_IP=$(dig +short "$PDC_HOST" 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
     echo -e "${GREY}[*] Resolved $DOMAIN_INPUT → $DC_IP (PDC: $PDC_HOST)${NC}"
   else
     DC_IP=$(dig +short "$DOMAIN_INPUT" 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
     echo -e "${GREY}[*] Resolved $DOMAIN_INPUT → $DC_IP${NC}"
-  fi  
+  fi
+  
   if [ -z "$DC_IP" ]; then
     echo -e "${RED}[!] Could not resolve: $DOMAIN_INPUT${NC}"
     exit 1
@@ -226,12 +228,24 @@ else
   echo -e "${GREEN}[OK] LDAP Signing + Channel Binding enforced${NC}"
 fi
 
-# SMB Signing
-SMB_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
-if echo "$SMB_CHECK" | grep -q "signing:True"; then
-  echo -e "${GREEN}[OK] SMB Signing enforced${NC}"
+# SMB Signing Check
+SMB_DC_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
+if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
+  echo -e "${GREEN}[OK] SMB Signing enforced on DC${NC}"
 else
-  echo -e "${RED}[KO] SMB Signing NOT enforced${NC}"
+  echo -e "${RED}[KO] SMB Signing NOT enforced on DC${NC}"
+fi
+
+# Scan subnet for relay targets (silent)
+SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
+nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_targets.txt" &>/dev/null
+RELAY_COUNT=$(wc -l < "$OUTPUT_DIR/relay_targets.txt" 2>/dev/null || echo 0)
+
+if [ "$RELAY_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $RELAY_COUNT host(s) without SMB Signing in ${SUBNET}.0/24 → relay_targets.txt${NC}"
+else
+  echo -e "${GREEN}[OK] All hosts in ${SUBNET}.0/24 have SMB Signing${NC}"
+  rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
 
 # Unconstrained Delegation
