@@ -291,6 +291,13 @@ else
   echo -e "${GREEN}[OK] WPAD DNS entry exists${NC}"
 fi
 
+# IPv6 DNS Check
+IPV6_ENABLED=$(dig +short AAAA $DC_HOSTNAME 2>/dev/null)
+if [ -z "$IPV6_ENABLED" ]; then
+  echo -e "${RED}[KO] No IPv6 DNS record for DC (DHCPv6 DNS Takeover possible via mitm6/Inveigh)${NC}"
+else
+  echo -e "${GREEN}[OK] IPv6 DNS configured for DC${NC}"
+fi
 
 # Ghost SPN Check (SPNs pointing to non-resolvable hostnames)
 echo ""
