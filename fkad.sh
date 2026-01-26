@@ -349,7 +349,11 @@ if [ "$KERBEROAST_COUNT" -gt 0 ]; then
   grep -oP '(?<=\*)[^$]+(?=\$)' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null | while read -r account; do
     echo -e "${RED}       └─ $account${NC}"
   done
-  echo -e "${GREY}       hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt${NC}"
+  echo -e "${GREY}       hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt /usr/share/hashcat/rules/best64.rule${NC}"
+  echo -e "${GREY}       wget -q https://crackstation.net/files/crackstation.txt.gz -O /usr/share/wordlists/crackstation.txt.gz && gunzip -f /usr/share/wordlists/crackstation.txt.gz${NC}"
+  echo -e "${GREY}       wget -q https://raw.githubusercontent.com/NotSoSecure/password_cracking_rules/master/OneRuleToRuleThemAll.rule -O /usr/share/hashcat/rules/OneRuleToRuleThemAll.rule${NC}"
+  echo -e "${GREY}       hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/crackstation.txt -r /usr/share/hashcat/rules/OneRuleToRuleThemAll.rule${NC}"
+
 else
   echo -e "${GREEN}[OK] No Kerberoastable accounts found${NC}"
   rm -f "$OUTPUT_DIR/kerberoast.txt"
