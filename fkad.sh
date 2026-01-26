@@ -62,9 +62,6 @@ if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$DC_IP" ]; then
   exit 1
 fi
 
-echo "Checking Active Directory configuration..."
-echo ""
-
 # Discover domain
 DOMAIN=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null | grep -oP '(?<=domain:)[^)]+' | tr -d ' ')
 if [ -z "$DOMAIN" ]; then
@@ -182,7 +179,6 @@ CONTAINER_NAME=$(hostname)
 cd "$OUTPUT_DIR"
 zip -q bloodhound.zip *.json
 cd "$CURRENT_PATH"
-echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
 
 echo ""
 # ADCS/PKI Vulnerability Check
@@ -228,9 +224,11 @@ LDAP_CB_OFF=$(echo "$LDAP_CHECK" | grep -q "channel binding:No" && echo "1")
 if [ "$LDAP_SIGNING_OFF" = "1" ] && [ "$LDAP_CB_OFF" = "1" ]; then
   echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced (NTLM Relay to LDAP possible)${NC}"
 elif [ "$LDAP_SIGNING_OFF" = "1" ]; then
-  echo -e "${RED}[KO] LDAP Signing NOT enforced (but Channel Binding is)${NC}"
+  echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
+  echo -e "${GREEN}       └─ Not Exploitable: Channel Binding enabled${NC}"
 elif [ "$LDAP_CB_OFF" = "1" ]; then
-  echo -e "${RED}[KO] LDAP Channel Binding missing (but Signing enforced)${NC}"
+  echo -e "${RED}[KO] LDAP Channel Binding NOT enforced${NC}"
+  echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
 else
   echo -e "${GREEN}[OK] LDAP Signing + Channel Binding enforced${NC}"
 fi
@@ -243,7 +241,7 @@ else
   echo -e "${RED}[KO] SMB Signing NOT enforced on DC${NC}"
 fi
 
-# Scan subnet for relay targets (silent)
+# Scan subnet for relay targets
 SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
 nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_targets.txt" &>/dev/null
 RELAY_COUNT=$(wc -l < "$OUTPUT_DIR/relay_targets.txt" 2>/dev/null || echo 0)
@@ -291,7 +289,7 @@ fi
 # WPAD
 WPAD_DNS=$(nslookup wpad.$DOMAIN $DC_IP 2>&1)
 if echo "$WPAD_DNS" | grep -q "can't find"; then
-  echo -e "${RED}[KO] No WPAD DNS entry (WPAD Poisoning might be possible)${NC}"
+  echo -e "${RED}[KO] No WPAD DNS entry (WPAD Poisoning)${NC}"
 else
   echo -e "${GREEN}[OK] WPAD DNS entry exists${NC}"
 fi
@@ -299,7 +297,7 @@ fi
 # IPv6 DNS Check
 IPV6_ENABLED=$(dig +short AAAA $DC_HOSTNAME 2>/dev/null)
 if [ -z "$IPV6_ENABLED" ]; then
-  echo -e "${RED}[KO] No IPv6 DNS record for DC (DHCPv6 DNS Takeover possible via mitm6/Inveigh)${NC}"
+  echo -e "${RED}[KO] No IPv6 DNS record for DC (DHCPv6 DNS Takeover via mitm6)${NC}"
 else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC${NC}"
 fi
@@ -345,7 +343,8 @@ fi
 # Kerberoasting Check
 echo ""
 KERBEROAST_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --kerberoasting "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
-KERBEROAST_COUNT=$(grep -c '$krb5tgs$' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null || echo 0)
+KERBEROAST_COUNT=$(grep -c '\$krb5tgs\$' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
+KERBEROAST_COUNT=${KERBEROAST_COUNT:-0}
 
 if [ "$KERBEROAST_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $KERBEROAST_COUNT Kerberoastable account(s) found → kerberoast.txt${NC}"
@@ -420,4 +419,6 @@ else
 fi
 echo -e "${GREY}[--] kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
 
+echo ""
+echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
 echo ""
