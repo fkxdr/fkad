@@ -37,13 +37,20 @@ done
 # Accept domain or IP, autoresolve to IP if needed
 if [ ! -z "$DC_IP" ] && ! [[ "$DC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   DOMAIN_INPUT="$DC_IP"
-  DC_IP=$(dig +short "$DOMAIN_INPUT" 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
   
+  # Hole PDC via SRV Record
+  PDC_HOST=$(dig +short SRV _ldap._tcp.pdc._msdcs.$DOMAIN_INPUT 2>/dev/null | awk '{print $4}' | sed 's/\.$//')
+  if [ ! -z "$PDC_HOST" ]; then
+    DC_IP=$(dig +short "$PDC_HOST" 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
+    echo -e "${GREY}[*] Resolved $DOMAIN_INPUT → $DC_IP (PDC: $PDC_HOST)${NC}"
+  else
+    DC_IP=$(dig +short "$DOMAIN_INPUT" 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
+    echo -e "${GREY}[*] Resolved $DOMAIN_INPUT → $DC_IP${NC}"
+  fi  
   if [ -z "$DC_IP" ]; then
     echo -e "${RED}[!] Could not resolve: $DOMAIN_INPUT${NC}"
     exit 1
   fi
-  echo -e "${GREY}[*] Resolved $DOMAIN_INPUT → $DC_IP${NC}"
 fi
 
 # Validate
