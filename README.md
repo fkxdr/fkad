@@ -19,7 +19,11 @@ Example:
 
 ```bash
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d 10.10.2.13
+./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com
 ```
+
+> [!NOTE]
+> > The `-d` parameter accepts either a DC IP address or a domain name. If a domain is provided, it will be automatically resolved to the DC IP.
 
 ## Output / Report
 
