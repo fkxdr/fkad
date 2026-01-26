@@ -255,30 +255,35 @@ else
   rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
 
-# Unconstrained Delegation
-UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" \
-  sAMAccountName 2>/dev/null | grep "sAMAccountName:" | awk '{print $2}')
+# Unconstrained Delegation - nur Non-DCs sind relevant
+NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -vi "DC[0-9]*\$" | grep -v "^$")
+NON_DC_COUNT=$(echo "$NON_DC_UNCON" | grep -v "^$" | wc -l)
 
-UNCON_COUNT=$(echo "$UNCON_SYSTEMS" | grep -v "^$" | wc -l)
-if [ "$UNCON_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $UNCON_COUNT system(s) with Unconstrained Delegation${NC}"
+if [ "$NON_DC_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $NON_DC_COUNT non-DC system(s) with Unconstrained Delegation${NC}"
   while IFS= read -r system; do
     if [ ! -z "$system" ]; then
       echo -e "${RED}       └─ $system${NC}"
     fi
-  done <<< "$UNCON_SYSTEMS"
+  done <<< "$NON_DC_UNCON"
 else
-  echo -e "${GREEN}[OK] No Unconstrained Delegation found${NC}"
+  echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems (DCs excluded)${NC}"
 fi
 
 # Print Spooler Check on DC
 SPOOLER_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M spooler 2>/dev/null)
-if echo "$SPOOLER_CHECK" | grep -qi "STATUS_PIPE_NOT_AVAILABLE"; then
-  echo -e "${GREEN}[OK] Print Spooler disabled on DC${NC}"
-elif echo "$SPOOLER_CHECK" | grep -qi "Spooler.*enabled\|TRUE"; then
+if echo "$SPOOLER_CHECK" | grep -qi "Spooler.*enabled\|TRUE"; then
   echo -e "${RED}[KO] Print Spooler running on DC $DC_HOSTNAME${NC}"
+  
+  # Check for non-DC unconstrained delegation
+  NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -v "DC[0-9]*\$" | grep -v "^$")
+  if [ ! -z "$NON_DC_UNCON" ]; then
+    echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
+  else
+    echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets (DCs only)${NC}"
+  fi
+elif echo "$SPOOLER_CHECK" | grep -qi "STATUS_PIPE_NOT_AVAILABLE"; then
+  echo -e "${GREEN}[OK] Print Spooler disabled on DC${NC}"
 else
   echo -e "${GREY}[--] Print Spooler status unknown${NC}"
 fi
