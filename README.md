@@ -23,7 +23,7 @@ Example:
 ```
 
 > [!NOTE]
-> > The `-d` parameter accepts either a DC IP address or a domain name. If a domain is provided, it will be automatically resolved to the DC IP.
+> The `-d` parameter accepts either a DC IP address or a domain name. If a domain is provided, it will be automatically resolved to the DC IP.
 
 ## Output / Report
 
