@@ -34,6 +34,18 @@ while getopts "u:p:d:h" opt; do
   esac
 done
 
+# Accept domain or IP, autoresolve to IP if needed
+if [ ! -z "$DC_IP" ] && ! [[ "$DC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  DOMAIN_INPUT="$DC_IP"
+  DC_IP=$(dig +short "$DOMAIN_INPUT" 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
+  
+  if [ -z "$DC_IP" ]; then
+    echo -e "${RED}[!] Could not resolve: $DOMAIN_INPUT${NC}"
+    exit 1
+  fi
+  echo -e "${GREY}[*] Resolved $DOMAIN_INPUT → $DC_IP${NC}"
+fi
+
 # Validate
 if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$DC_IP" ]; then
   echo -e "${RED}[!] Missing parameters${NC}"
