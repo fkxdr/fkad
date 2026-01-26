@@ -182,10 +182,10 @@ cd "$CURRENT_PATH"
 
 echo ""
 # ADCS/PKI Vulnerability Check
-if command -v certipy &> /dev/null; then
-  CERTIPY_CMD="certipy"
-elif [ -f "/opt/tools/Certipy/venv/bin/certipy" ]; then
+if [ -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
   CERTIPY_CMD="/opt/tools/Certipy/venv/bin/certipy"
+elif command -v certipy &> /dev/null; then
+  CERTIPY_CMD="certipy"
 elif command -v certipy-ad &> /dev/null; then
   CERTIPY_CMD="certipy-ad"
 else
@@ -193,21 +193,24 @@ else
 fi
 
 if [ ! -z "$CERTIPY_CMD" ]; then
-  CERTIPY_OUTPUT=$($CERTIPY_CMD find -u "$USERNAME" -p "$PASSWORD" -dc-ip $DC_IP -target-ip $DC_IP -vulnerable -enable -stdout 2>/dev/null)
+  # Run certipy from output dir (it saves files in current dir)
+  cd "$OUTPUT_DIR"
+  $CERTIPY_CMD find -u "$USERNAME" -p "$PASSWORD" -dc-ip $DC_IP -timeout 5 &>/dev/null
+  cd "$CURRENT_PATH"
   
-  # Check if ADCS exists
-  if echo "$CERTIPY_OUTPUT" | grep -qi "Certificate Authority"; then
-    # Extract all ESC vulnerabilities
-    FOUND_ESCS=$(echo "$CERTIPY_OUTPUT" | grep -oE "ESC[0-9]+" | sort -u) 
-    if [ ! -z "$FOUND_ESCS" ]; then
+  CERTIPY_FILE=$(ls -t "$OUTPUT_DIR"/*_Certipy.txt 2>/dev/null | head -1)
+  
+  if [ -f "$CERTIPY_FILE" ]; then
+    # Get exploitable ESCs (exclude "Target Template" lines which are just info)
+    EXPLOITABLE_ESCS=$(grep -E "^\s+ESC[0-9]+" "$CERTIPY_FILE" | grep -v "Target Template" | grep -oE "ESC[0-9]+" | sort -u -V)
+    
+    if [ ! -z "$EXPLOITABLE_ESCS" ]; then
       echo -e "${RED}[KO] ADCS vulnerabilities found:${NC}"
       while IFS= read -r esc; do
-        if [ ! -z "$esc" ]; then
-          echo -e "${RED}    └─ $esc${NC}"
-        fi
-      done <<< "$FOUND_ESCS"
+        [ ! -z "$esc" ] && echo -e "${RED}       └─ $esc${NC}"
+      done <<< "$EXPLOITABLE_ESCS"
     else
-      echo -e "${GREEN}[OK] No ADCS vulnerabilities found${NC}"
+      echo -e "${GREEN}[OK] ADCS detected, no exploitable vulnerabilities${NC}"
     fi
   else
     echo -e "${GREY}[--] No ADCS/PKI infrastructure detected${NC}"
