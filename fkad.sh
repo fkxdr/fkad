@@ -102,23 +102,15 @@ else
 fi
 
 # Enumerate users with descriptions
-DESC_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(&(objectClass=user)(description=*))" sAMAccountName description 2>/dev/null)
-if [ ! -z "$DESC_OUTPUT" ]; then
-  echo "$DESC_OUTPUT" | grep -A1 "^sAMAccountName:" | grep -v "^--$" | \
-    sed 'N;s/sAMAccountName: \(.*\)\ndescription: \(.*\)/\1: \2/' | \
-    grep -v "^sAMAccountName:" > "$OUTPUT_DIR/user_descriptions.txt"
-  
-  DESC_COUNT=$(grep -c ":" "$OUTPUT_DIR/user_descriptions.txt" 2>/dev/null)
-  if [ "$DESC_COUNT" -gt 0 ]; then
-    echo -e "${GREEN}[OK] Enumerated $DESC_COUNT users with descriptions → user_descriptions.txt${NC}"
-  else
-    echo -e "${GREEN}[OK] No users with descriptions found${NC}"
-    rm -f "$OUTPUT_DIR/user_descriptions.txt"
-  fi
+DESC_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M get-desc-users 2>/dev/null)
+
+if echo "$DESC_OUTPUT" | grep -q "User:"; then
+  # Extract just the user:description lines and save to file
+  echo "$DESC_OUTPUT" | grep "User:" | sed 's/.*User: //' > "$OUTPUT_DIR/user_descriptions.txt"
+  DESC_COUNT=$(wc -l < "$OUTPUT_DIR/user_descriptions.txt" 2>/dev/null)
+  echo -e "${GREEN}[OK] $DESC_COUNT user(s) with descriptions → user_descriptions.txt${NC}"
 else
-  echo -e "${GREY}[??] Failed to enumerate user descriptions${NC}"
+  echo -e "${GREEN}[OK] No users with descriptions found${NC}"
 fi
 
 # Bloodhound Export
