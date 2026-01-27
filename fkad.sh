@@ -315,6 +315,7 @@ if [ "$NON_DC_COUNT" -gt 0 ]; then
   while IFS= read -r system; do
     if [ ! -z "$system" ]; then
       echo -e "${RED}       └─ $system${NC}"
+      echo -e "${GREY}       coercer scan -u '$USERNAME' -p '$PASSWORD' -d $DOMAIN -t $DC_IP${NC}"
     fi
   done <<< "$NON_DC_UNCON"
 else
