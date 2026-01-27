@@ -18,7 +18,6 @@ echo ""
 echo -e "${GREY}    fkad by @fkxdr${NC}"
 echo -e "${GREY}    https://github.com/fkxdr/fkad${NC}"
 echo ""
-echo ""
 
 # Parse arguments
 while getopts "u:p:d:h" opt; do
@@ -449,7 +448,6 @@ else
 fi
 
 # MachineAccountQuota Check
-echo ""
 MAQ=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
   "(objectClass=domain)" ms-DS-MachineAccountQuota 2>/dev/null | grep "ms-DS-MachineAccountQuota:" | awk '{print $2}')
@@ -494,6 +492,27 @@ else
   fi
 fi
 echo -e "${GREY}[--] kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
+
+echo ""
+
+# Email Security (SPF/DMARC)
+SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
+DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
+MX_SERVER=$(dig mx $DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
+
+if [ -z "$SPF_CHECK" ] && [ -z "$DMARC_CHECK" ]; then
+  echo -e "${RED}[KO] No SPF + No DMARC (Email Spoofing possible)${NC}"
+  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+elif [ -z "$SPF_CHECK" ]; then
+  echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
+  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+elif [ -z "$DMARC_CHECK" ]; then
+  echo -e "${RED}[KO] No DMARC record (SPF without enforcement, no spoofing possible)${NC}"
+else
+  echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
+fi
+
+
 
 echo ""
 echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
