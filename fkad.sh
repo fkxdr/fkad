@@ -185,22 +185,42 @@ else
 fi
 
 if [ ! -z "$CERTIPY_CMD" ]; then
-  # Run certipy from output dir (it saves files in current dir)
   cd "$OUTPUT_DIR"
   $CERTIPY_CMD find -u "$USERNAME" -p "$PASSWORD" -dc-ip $DC_IP -timeout 5 &>/dev/null
   cd "$CURRENT_PATH"
   
-  CERTIPY_FILE=$(ls -t "$OUTPUT_DIR"/*_Certipy.txt 2>/dev/null | head -1)
+  CERTIPY_TXT=$(ls -t "$OUTPUT_DIR"/*_Certipy.txt 2>/dev/null | head -1)
   
-  if [ -f "$CERTIPY_FILE" ]; then
-    # Get exploitable ESCs (exclude "Target Template" lines which are just info)
-    EXPLOITABLE_ESCS=$(grep -E "^\s+ESC[0-9]+" "$CERTIPY_FILE" | grep -v "Target Template" | grep -oE "ESC[0-9]+" | sort -u -V)
+  if [ -f "$CERTIPY_TXT" ]; then
+    VULNS=$(awk '
+      /^  [0-9]+$/ { current="" }
+      /CA Name\s*:/ { gsub(/.*CA Name\s*:\s*/, ""); gsub(/\s*$/, ""); current="CA:" $0 }
+      /Template Name\s*:/ { gsub(/.*Template Name\s*:\s*/, ""); gsub(/\s*$/, ""); current="Template:" $0 }
+      /\[!\] Vulnerabilities/ { in_vuln=1; next }
+      in_vuln && /^\s+ESC[0-9]+/ { 
+        match($0, /ESC[0-9]+/); 
+        esc=substr($0, RSTART, RLENGTH);
+        if (current != "") print current "|" esc
+      }
+      in_vuln && /^  [0-9]+$|^Certificate Templates|^Certificate Authorities/ { in_vuln=0 }
+    ' "$CERTIPY_TXT" | sort -u)
     
-    if [ ! -z "$EXPLOITABLE_ESCS" ]; then
-      echo -e "${RED}[KO] ADCS vulnerabilities found:${NC}"
-      while IFS= read -r esc; do
-        [ ! -z "$esc" ] && echo -e "${RED}       └─ $esc${NC}"
-      done <<< "$EXPLOITABLE_ESCS"
+    if [ ! -z "$VULNS" ]; then
+      echo -e "${RED}[KO] ADCS vulnerabilities found → adcs_certipy.txt${NC}"
+      
+      declare -A GROUPED
+      while IFS='|' read -r name esc; do
+        if [ -z "${GROUPED[$name]}" ]; then
+          GROUPED[$name]="$esc"
+        else
+          GROUPED[$name]="${GROUPED[$name]}, $esc"
+        fi
+      done <<< "$VULNS"
+      
+      for name in "${!GROUPED[@]}"; do
+        echo -e "${RED}       └─ $name: ${GROUPED[$name]}${NC}"
+        echo "$name: ${GROUPED[$name]}" >> "$OUTPUT_DIR/adcs_certipy.txt"
+      done
     else
       echo -e "${GREEN}[OK] ADCS detected, no exploitable vulnerabilities${NC}"
     fi
@@ -259,7 +279,7 @@ LAPS_NEW_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" 
 
 if [ "$LAPS_SCHEMA" -gt 0 ] || [ "$LAPS_NEW_SCHEMA" -gt 0 ]; then
   # Check if we can read any LAPS passwords
-  LAPS_READABLE=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M laps 2>/dev/null | grep -c "Password")
+  LAPS_READABLE=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M laps 2>/dev/null | grep -v "No result found" | grep -c "Password:")
   
   if [ "$LAPS_READABLE" -gt 0 ]; then
     echo -e "${RED}[KO] LAPS deployed - passwords readable by current user${NC}"
