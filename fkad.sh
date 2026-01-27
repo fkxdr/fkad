@@ -356,8 +356,65 @@ else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC${NC}"
 fi
 
-# Ghost SPN Check
 echo ""
+
+# Domain Trusts + SID Filtering Check
+TRUST_DATA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "CN=System,$DOMAIN_DN" \
+  "(objectClass=trustedDomain)" cn trustDirection trustAttributes 2>/dev/null)
+
+TRUST_COUNT=$(echo "$TRUST_DATA" | grep -c "^cn:")
+
+if [ "$TRUST_COUNT" -gt 0 ]; then
+  echo -e "${GREY}[--] $TRUST_COUNT Domain Trust(s) found${NC}"
+  
+  echo "$TRUST_DATA" | awk '
+    /^cn:/ { cn=$2 }
+    /^trustDirection:/ { dir=$2 }
+    /^trustAttributes:/ { 
+      attr=$2
+      sidfilter = and(attr, 4)
+      if (dir == 1) direction = "Inbound"
+      else if (dir == 2) direction = "Outbound"
+      else if (dir == 3) direction = "Bidirectional"
+      else direction = "Unknown"
+      if (and(attr, 64)) ttype = "Forest"
+      else if (and(attr, 8)) ttype = "External"
+      else ttype = "Domain"
+      printf "%s|%s|%s|%s\n", cn, direction, ttype, (sidfilter ? "Yes" : "No")
+    }
+  ' | while IFS='|' read -r name direction ttype sidfilter; do
+    if [ "$sidfilter" = "No" ]; then
+      echo -e "${RED}[KO] $name ($direction $ttype Trust) - SID Filtering: off${NC}"
+      echo -e "${RED}       └─ SID History Injection possible${NC}"
+    else
+      echo -e "${GREEN}[OK] $name ($direction $ttype Trust) - SID Filtering: on${NC}"
+    fi
+  done
+else
+  echo -e "${GREEN}[OK] No Domain Trusts found${NC}"
+fi
+
+# Email Security (SPF/DMARC)
+SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
+DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
+MX_SERVER=$(dig mx $DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
+
+if [ -z "$SPF_CHECK" ] && [ -z "$DMARC_CHECK" ]; then
+  echo -e "${RED}[KO] No SPF + No DMARC (Email Spoofing possible)${NC}"
+  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+elif [ -z "$SPF_CHECK" ]; then
+  echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
+  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+elif [ -z "$DMARC_CHECK" ]; then
+  echo -e "${RED}[KO] No DMARC record (SPF without enforcement, no spoofing possible)${NC}"
+else
+  echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
+fi
+
+echo ""
+
+# Ghost SPN Check
 GHOST_SPNS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
   "(&(objectClass=computer)(servicePrincipalName=*))" \
@@ -448,6 +505,8 @@ else
   rm -f "$OUTPUT_DIR/asrep.txt"
 fi
 
+echo ""
+
 # MachineAccountQuota Check
 MAQ=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
@@ -462,47 +521,6 @@ if [ ! -z "$MAQ" ]; then
 else
   echo -e "${GREY}[--] Could not determine MachineAccountQuota${NC}"
 fi
-
-echo ""
-
-# Domain Trusts + SID Filtering Check
-TRUST_DATA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "CN=System,$DOMAIN_DN" \
-  "(objectClass=trustedDomain)" cn trustDirection trustAttributes 2>/dev/null)
-
-TRUST_COUNT=$(echo "$TRUST_DATA" | grep -c "^cn:")
-
-if [ "$TRUST_COUNT" -gt 0 ]; then
-  echo -e "${BLUE}[*] $TRUST_COUNT Domain Trust(s) found${NC}"
-  
-  echo "$TRUST_DATA" | awk '
-    /^cn:/ { cn=$2 }
-    /^trustDirection:/ { dir=$2 }
-    /^trustAttributes:/ { 
-      attr=$2
-      sidfilter = and(attr, 4)
-      if (dir == 1) direction = "Inbound"
-      else if (dir == 2) direction = "Outbound"
-      else if (dir == 3) direction = "Bidirectional"
-      else direction = "Unknown"
-      if (and(attr, 64)) ttype = "Forest"
-      else if (and(attr, 8)) ttype = "External"
-      else ttype = "Domain"
-      printf "%s|%s|%s|%s\n", cn, direction, ttype, (sidfilter ? "Yes" : "No")
-    }
-  ' | while IFS='|' read -r name direction ttype sidfilter; do
-    if [ "$sidfilter" = "No" ]; then
-      echo -e "${RED}[KO] $name ($direction $ttype Trust) - SID Filtering: OFF${NC}"
-      echo -e "${RED}       └─ SID History Injection possible${NC}"
-    else
-      echo -e "${GREEN}[OK] $name ($direction $ttype Trust) - SID Filtering: ON${NC}"
-    fi
-  done
-else
-  echo -e "${GREY}[--] No Domain Trusts found${NC}"
-fi
-
-echo ""
 
 # Password policy
 POL_OUT=$(nxc smb "$DC_IP" -u "$USERNAME" -p "$PASSWORD" --pass-pol 2>/dev/null)
@@ -532,25 +550,6 @@ else
   fi
 fi
 echo -e "${GREY}[--] kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
-
-echo ""
-
-# Email Security (SPF/DMARC)
-SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
-DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
-MX_SERVER=$(dig mx $DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
-
-if [ -z "$SPF_CHECK" ] && [ -z "$DMARC_CHECK" ]; then
-  echo -e "${RED}[KO] No SPF + No DMARC (Email Spoofing possible)${NC}"
-  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
-elif [ -z "$SPF_CHECK" ]; then
-  echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
-  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
-elif [ -z "$DMARC_CHECK" ]; then
-  echo -e "${RED}[KO] No DMARC record (SPF without enforcement, no spoofing possible)${NC}"
-else
-  echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
-fi
 
 echo ""
 echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
