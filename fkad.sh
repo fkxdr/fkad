@@ -248,6 +248,45 @@ else
   rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
 
+# LAPS Check
+LAPS_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
+  "(name=ms-Mcs-AdmPwd)" name 2>/dev/null | grep -c "name: ms-Mcs-AdmPwd")
+
+LAPS_NEW_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
+  "(name=msLAPS-Password)" name 2>/dev/null | grep -c "name: msLAPS-Password")
+
+if [ "$LAPS_SCHEMA" -gt 0 ] || [ "$LAPS_NEW_SCHEMA" -gt 0 ]; then
+  # Check if we can read any LAPS passwords
+  LAPS_READABLE=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M laps 2>/dev/null | grep -c "Password")
+  
+  if [ "$LAPS_READABLE" -gt 0 ]; then
+    echo -e "${RED}[KO] LAPS deployed - passwords readable by current user${NC}"
+  else
+    echo -e "${GREEN}[OK] LAPS deployed - passwords not readable by current user${NC}"
+  fi
+else
+  echo -e "${RED}[KO] LAPS not deployed${NC}"
+fi
+
+# DES Encryption Check
+DES_USERS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(userAccountControl:1.2.840.113556.1.4.803:=2097152)" sAMAccountName 2>/dev/null | \
+  grep "^sAMAccountName:" | awk '{print $2}')
+
+DES_COUNT=$(echo "$DES_USERS" | grep -v "^$" | wc -l)
+
+if [ "$DES_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $DES_COUNT user(s) with DES-only Kerberos encryption:${NC}"
+  echo "$DES_USERS" | while read -r user; do
+    [ ! -z "$user" ] && echo -e "${RED}       └─ $user${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No users with DES-only Kerberos encryption${NC}"
+fi
+
 # Unconstrained Delegation - nur Non-DCs sind relevant
 NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -vi "DC[0-9]*\$" | grep -v "^$")
 NON_DC_COUNT=$(echo "$NON_DC_UNCON" | grep -v "^$" | wc -l)
@@ -418,7 +457,7 @@ LOCKOUT_THRESHOLD=$(echo "$POL_OUT" | grep -i 'Account Lockout Threshold' | awk 
 if [ "$MIN_PW_LENGTH" = "unknown" ]; then
   echo -e "${GREY}[--] Minimum password length: unknown${NC}"
 else
-  if [ "$MIN_PW_LENGTH" -lt 8 ] 2>/dev/null; then
+  if [ "$MIN_PW_LENGTH" -lt 14 ] 2>/dev/null; then
     echo -e "${RED}[KO] Minimum password length: $MIN_PW_LENGTH (<14)${NC}"
   else
     echo -e "${GREEN}[OK] Minimum password length: $MIN_PW_LENGTH${NC}"
