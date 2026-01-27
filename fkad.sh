@@ -137,6 +137,15 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
         echo -e "${GREEN}[OK] GriffonAD installed${NC}"
       fi
     fi
+    
+    # Patch GriffonAD for empty GPO GUIDs
+    if [ -f "$GRIFFON_PATH/lib/database.py" ]; then
+      if ! grep -q "if gpo_guid and gpo_guid in self.objects_by_sid" "$GRIFFON_PATH/lib/database.py"; then
+        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.append(o.dn)/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.append(o.dn)/' "$GRIFFON_PATH/lib/database.py"
+        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.sort()/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.sort()/' "$GRIFFON_PATH/lib/database.py"
+        echo -e "${GREY}[→] Patched GriffonAD for empty GPO GUIDs${NC}"
+      fi
+    fi
 
     # Run GriffonAD
     if [ -f "$GRIFFON_PATH/griffon.py" ]; then
@@ -306,20 +315,22 @@ else
   echo -e "${GREEN}[OK] No users with DES-only Kerberos encryption${NC}"
 fi
 
-# Unconstrained Delegation - nur Non-DCs sind relevant
+# Unconstrained Delegation Check
+UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | \
+  grep "^sAMAccountName:" | awk '{print $2}')
+
 NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -vi "DC[0-9]*\$" | grep -v "^$")
 NON_DC_COUNT=$(echo "$NON_DC_UNCON" | grep -v "^$" | wc -l)
 
 if [ "$NON_DC_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $NON_DC_COUNT non-DC system(s) with Unconstrained Delegation${NC}"
   while IFS= read -r system; do
-    if [ ! -z "$system" ]; then
-      echo -e "${RED}       └─ $system${NC}"
-      echo -e "${GREY}       coercer scan -u '$USERNAME' -p '$PASSWORD' -d $DOMAIN -t $DC_IP${NC}"
-    fi
+    [ ! -z "$system" ] && echo -e "${RED}       └─ $system${NC}"
   done <<< "$NON_DC_UNCON"
 else
-  echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems (DCs excluded)${NC}"
+  echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
 fi
 
 # Print Spooler Check on DC
@@ -368,20 +379,25 @@ TRUST_COUNT=$(echo "$TRUST_DATA" | grep -c "^cn:")
 if [ "$TRUST_COUNT" -gt 0 ]; then
   echo -e "${GREY}[--] $TRUST_COUNT Domain Trust(s) found${NC}"
   
-  echo "$TRUST_DATA" | awk '
+echo "$TRUST_DATA" | awk '
     /^cn:/ { cn=$2 }
     /^trustDirection:/ { dir=$2 }
     /^trustAttributes:/ { 
       attr=$2
-      sidfilter = and(attr, 4)
       if (dir == 1) direction = "Inbound"
       else if (dir == 2) direction = "Outbound"
       else if (dir == 3) direction = "Bidirectional"
       else direction = "Unknown"
-      if (and(attr, 64)) ttype = "Forest"
-      else if (and(attr, 8)) ttype = "External"
-      else ttype = "Domain"
-      printf "%s|%s|%s|%s\n", cn, direction, ttype, (sidfilter ? "Yes" : "No")
+      
+      is_forest = and(attr, 64)
+      if (is_forest) {
+        ttype = "Forest"
+        sidfilter = and(attr, 4) ? "Yes" : "No"
+      } else {
+        ttype = "External"
+        sidfilter = "Yes"
+      }
+      printf "%s|%s|%s|%s\n", cn, direction, ttype, sidfilter
     }
   ' | while IFS='|' read -r name direction ttype sidfilter; do
     if [ "$sidfilter" = "No" ]; then
