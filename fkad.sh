@@ -465,6 +465,45 @@ fi
 
 echo ""
 
+# Domain Trusts + SID Filtering Check
+TRUST_DATA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "CN=System,$DOMAIN_DN" \
+  "(objectClass=trustedDomain)" cn trustDirection trustAttributes 2>/dev/null)
+
+TRUST_COUNT=$(echo "$TRUST_DATA" | grep -c "^cn:")
+
+if [ "$TRUST_COUNT" -gt 0 ]; then
+  echo -e "${BLUE}[*] $TRUST_COUNT Domain Trust(s) found${NC}"
+  
+  echo "$TRUST_DATA" | awk '
+    /^cn:/ { cn=$2 }
+    /^trustDirection:/ { dir=$2 }
+    /^trustAttributes:/ { 
+      attr=$2
+      sidfilter = and(attr, 4)
+      if (dir == 1) direction = "Inbound"
+      else if (dir == 2) direction = "Outbound"
+      else if (dir == 3) direction = "Bidirectional"
+      else direction = "Unknown"
+      if (and(attr, 64)) ttype = "Forest"
+      else if (and(attr, 8)) ttype = "External"
+      else ttype = "Domain"
+      printf "%s|%s|%s|%s\n", cn, direction, ttype, (sidfilter ? "Yes" : "No")
+    }
+  ' | while IFS='|' read -r name direction ttype sidfilter; do
+    if [ "$sidfilter" = "No" ]; then
+      echo -e "${RED}[KO] $name ($direction $ttype Trust) - SID Filtering: OFF${NC}"
+      echo -e "${RED}       └─ SID History Injection possible${NC}"
+    else
+      echo -e "${GREEN}[OK] $name ($direction $ttype Trust) - SID Filtering: ON${NC}"
+    fi
+  done
+else
+  echo -e "${GREY}[--] No Domain Trusts found${NC}"
+fi
+
+echo ""
+
 # Password policy
 POL_OUT=$(nxc smb "$DC_IP" -u "$USERNAME" -p "$PASSWORD" --pass-pol 2>/dev/null)
 
@@ -512,8 +551,6 @@ elif [ -z "$DMARC_CHECK" ]; then
 else
   echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
 fi
-
-
 
 echo ""
 echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
