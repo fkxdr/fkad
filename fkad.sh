@@ -297,41 +297,64 @@ else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC${NC}"
 fi
 
-# Ghost SPN Check (SPNs pointing to non-resolvable hostnames)
+# Ghost SPN Check
 echo ""
 GHOST_SPNS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
   "(&(objectClass=computer)(servicePrincipalName=*))" \
   sAMAccountName servicePrincipalName 2>/dev/null | \
   awk '/^sAMAccountName:/ {comp=$2} /^servicePrincipalName:/ {print comp":"$2}')
+
 if [ ! -z "$GHOST_SPNS" ]; then
   GHOST_COUNT=0
   GHOST_LIST=""
   
   while IFS=: read -r computer spn; do
-    # Extract hostname from SPN (format: service/hostname or service/hostname:port)
     if [[ "$spn" =~ ^[^/]+/([^:/]+) ]]; then
       spn_host="${BASH_REMATCH[1]}"
-      hostname="${spn_host%%.*}"  # Get first part before dot
-
-      # Try DNS lookup
-      if [[ ! "$hostname" =~ ^[0-9a-f]{8}-[0-9a-f]{4} ]] && \
-         [[ "${hostname,,}" != "${computer,,}" ]]; then
-        if ! dig +short +time=1 +tries=1 "$spn_host" @$DC_IP &>/dev/null; then
-          GHOST_COUNT=$((GHOST_COUNT + 1))
-          GHOST_LIST="${GHOST_LIST}${RED}       └─ ${computer}: ${spn}${NC}\n"
-        fi
+      
+      # Skip GUIDs, Azure, Microsoft domains
+      [[ "$spn_host" =~ ^[0-9a-f]{8}-[0-9a-f]{4} ]] && continue
+      [[ "$spn_host" =~ nsatc\.net$ ]] && continue
+      [[ "$spn_host" =~ windows\.net$ ]] && continue
+      [[ "$spn_host" =~ microsoft\.com$ ]] && continue
+      
+      # Normalize computer name
+      computer_clean="${computer%\$}"
+      computer_clean="${computer_clean,,}"
+      
+      # Extract hostname from SPN
+      spn_hostname="${spn_host%%.*}"
+      spn_hostname="${spn_hostname,,}"
+      
+      # Skip if SPN matches computer name (normal)
+      [[ "$spn_hostname" == "$computer_clean" ]] && continue
+      
+      # Add domain if not FQDN
+      if [[ ! "$spn_host" =~ \. ]]; then
+        spn_fqdn="${spn_host}.${DOMAIN}"
+      else
+        spn_fqdn="$spn_host"
+      fi
+      
+      # Check DNS
+      DNS_RESULT=$(dig +short +time=2 +tries=2 "$spn_fqdn" @$DC_IP 2>/dev/null)
+      
+      if [ -z "$DNS_RESULT" ]; then
+        GHOST_COUNT=$((GHOST_COUNT + 1))
+        GHOST_LIST="${GHOST_LIST}${RED}       └─ ${computer}: ${spn}${NC}\n"
       fi
     fi
   done <<< "$GHOST_SPNS"
+  
   if [ "$GHOST_COUNT" -gt 0 ]; then
-    echo -e "${RED}[KO] $GHOST_COUNT Ghost SPN(s) found (unresolvable hostnames)${NC}"
+    echo -e "${RED}[KO] $GHOST_COUNT Ghost SPN(s) found (potential SPN hijacking)${NC}"
     echo -e "$GHOST_LIST"
   else
     echo -e "${GREEN}[OK] No Ghost SPNs found${NC}"
   fi
 else
-  echo -e "${GREY}[--] Could not check for Ghost SPNs${NC}"
+  echo -e "${GREY}[--] Could not enumerate SPNs${NC}"
 fi
 
 # Kerberoasting Check
