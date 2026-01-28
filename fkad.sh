@@ -115,7 +115,7 @@ fi
 # Bloodhound Export
 if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
-  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "$DOMAIN" -ns "$DC_IP" -c All &>/dev/null
+  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_HOSTNAME}" -ns "$DC_IP" -c All &>/dev/null
 
   # Check for BloodHound JSONs
   BH_JSON=$(ls -1 ${CURRENT_PATH}/*.json 2>/dev/null | wc -l)
@@ -151,6 +151,8 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
     if [ -f "$GRIFFON_PATH/griffon.py" ]; then
       cd "$OUTPUT_DIR"
       JSON_FILES=( *.json )
+      if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
+        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" -f "$OUTPUT_DIR/owned.txt" *.json 2>&1)
         if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
           echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
         elif echo "$GRIFFON_OUTPUT" | grep -q -- "->"; then
