@@ -263,8 +263,15 @@ else
 fi
 
 # PetitPotam (MS-EFSRPC) Check on DC
-if command -v petitpotam.py &>/dev/null; then
-  PETITPOTAM_OUTPUT=$(petitpotam.py -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" 127.0.0.1 $DC_IP 2>&1)
+PETITPOTAM_CMD=""
+if [ -x "/opt/tools/PetitPotam/PetitPotam.py" ]; then
+  PETITPOTAM_CMD="/opt/tools/PetitPotam/venv/bin/python3 /opt/tools/PetitPotam/PetitPotam.py"
+elif command -v petitpotam.py &>/dev/null; then
+  PETITPOTAM_CMD="petitpotam.py"
+fi
+
+if [ ! -z "$PETITPOTAM_CMD" ]; then
+  PETITPOTAM_OUTPUT=$($PETITPOTAM_CMD -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" 127.0.0.1 $DC_IP 2>&1)
   if echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
     echo -e "${RED}[KO] PetitPotam (MS-EFSRPC) vulnerable on DC${NC}"
     if [ ! -z "$NON_DC_UNCON" ]; then
