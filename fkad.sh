@@ -525,6 +525,16 @@ else
   rm -f "$OUTPUT_DIR/asrep.txt"
 fi
 
+# Timeroasting Check
+TIMEROAST_OUTPUT=$(timeout 60 nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M timeroast -o RIDS=500-5000 2>/dev/null)
+TIMEROAST_HASHES=$(echo "$TIMEROAST_OUTPUT" | grep -c '\$sntp-ms\$')
+if [ "$TIMEROAST_HASHES" -gt 0 ]; then
+  echo -e "${RED}[KO] $TIMEROAST_HASHES Timeroastable account(s) found${NC}"
+  echo "$TIMEROAST_OUTPUT" | grep '\$sntp-ms\$' > "$OUTPUT_DIR/timeroast.txt"
+else
+  echo -e "${GREEN}[OK] No Timeroastable accounts found${NC}"
+fi
+
 echo ""
 
 # Domain Trusts + SID Filtering Check
