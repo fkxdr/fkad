@@ -210,6 +210,27 @@ else
   echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
 fi
 
+# Constrained Delegation Check
+CONSTRAINED=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(msDS-AllowedToDelegateTo=*)" sAMAccountName msDS-AllowedToDelegateTo 2>/dev/null | \
+  grep -E "^(sAMAccountName|msDS-AllowedToDelegateTo):" | \
+  awk '/^sAMAccountName:/ {name=$2} /^msDS-AllowedToDelegateTo:/ {print name " → " $2}')
+
+USER_CD=$(echo "$CONSTRAINED" | grep -vE '^\S+\$ →' | grep -v "^$")
+DC_TARGET=$(echo "$CONSTRAINED" | grep -iE "→.*(${DC_HOSTNAME}|${DC_FQDN})" | grep -v "^$")
+CRITICAL_CD=$(echo -e "${USER_CD}\n${DC_TARGET}" | grep -v "^$" | sort -u)
+CRITICAL_COUNT=$(echo "$CRITICAL_CD" | grep -v "^$" | wc -l)
+
+if [ "$CRITICAL_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $CRITICAL_COUNT critical Constrained Delegation entry/entries${NC}"
+  echo "$CRITICAL_CD" | while read -r line; do
+    [ ! -z "$line" ] && echo -e "${RED}       └─ $line${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No critical Constrained Delegation (user accounts or DC targets)${NC}"
+fi
+
 # Print Spooler (MS-RPRN) Check on DC
 SPOOLER_CHECK=$(rpcdump.py "$USERNAME:$PASSWORD@$DC_IP" 2>/dev/null | grep -i "MS-RPRN")
 if [ ! -z "$SPOOLER_CHECK" ]; then
