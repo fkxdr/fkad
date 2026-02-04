@@ -243,7 +243,7 @@ fi
 # LDAP Signing & Channel Binding
 LDAP_CHECK=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
 LDAP_SIGNING_OFF=$(echo "$LDAP_CHECK" | grep -q "signing:None" && echo "1")
-LDAP_CB_OFF=$(echo "$LDAP_CHECK" | grep -q "channel binding:No" && echo "1")
+LDAP_CB_OFF=$(echo "$LDAP_CHECK" | grep -qE "channel binding:(No|Never)" && echo "1")
 
 if [ "$LDAP_SIGNING_OFF" = "1" ] && [ "$LDAP_CB_OFF" = "1" ]; then
   echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced (NTLM Relay to LDAP possible)${NC}"
