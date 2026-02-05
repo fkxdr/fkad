@@ -530,6 +530,42 @@ else
   echo -e "${GREEN}[OK] No users with descriptions found${NC}"
 fi
 
+# Create domain_computers.txt with OS info
+ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(&(objectClass=computer)(!(userAccountControl:1.2.840.113556.1.4.803:=8192)))" \
+  sAMAccountName operatingSystem operatingSystemVersion 2>/dev/null | \
+  awk '
+    /^sAMAccountName:/ { name=$2 }
+    /^operatingSystem:/ { 
+      os=$0; 
+      sub(/^operatingSystem: /, "", os)
+    }
+    /^operatingSystemVersion:/ { 
+      ver=$0; 
+      sub(/^operatingSystemVersion: /, "", ver)
+    }
+    /^$/ { 
+      if (name != "") {
+        if (os != "") {
+          printf "%s - %s", name, os
+          if (ver != "") printf " (%s)", ver
+          printf "\n"
+        } else {
+          print name " - Unknown OS"
+        }
+        name=""; os=""; ver=""
+      }
+    }
+  ' | sort > "$OUTPUT_DIR/domain_computers.txt"
+
+if [ -f "$OUTPUT_DIR/domain_computers.txt" ] && [ -s "$OUTPUT_DIR/domain_computers.txt" ]; then
+  COMPUTER_COUNT=$(wc -l < "$OUTPUT_DIR/domain_computers.txt")
+  echo -e "${GREEN}[OK] Enumerated $COMPUTER_COUNT computer account(s) → domain_computers.txt${NC}"
+else
+  echo -e "${GREY}[--] Failed to enumerate computers${NC}"
+fi
+
 if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
   cd "$OUTPUT_DIR"
