@@ -113,6 +113,30 @@ echo -e "${BLUE}[*] DC IP     : $DC_IP${NC}"
 echo -e "${BLUE}[*] Domain    : $DOMAIN${NC}"
 echo ""
 
+# Get all Domain Controllers in environment
+ALL_DCS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" \
+  dNSHostName 2>/dev/null | \
+  grep "^dNSHostName:" | awk '{print $2}' | sort -u)
+  
+if [ ! -z "$ALL_DCS" ]; then
+  > "$OUTPUT_DIR/all_dcs.txt"
+  while read -r dc_fqdn; do
+    dc_ip=$(dig +short "$dc_fqdn" @$DC_IP 2>/dev/null | grep -E '^[0-9]+\.' | head -1)
+    if [ ! -z "$dc_ip" ]; then
+      echo "${dc_fqdn}:${dc_ip}" >> "$OUTPUT_DIR/all_dcs.txt"
+    fi
+  done <<< "$ALL_DCS"
+  DC_COUNT=$(wc -l < "$OUTPUT_DIR/all_dcs.txt")
+  echo -e "${GREY}[*] Found $DC_COUNT Domain Controller(s) → all_dcs.txt${NC}"
+else
+  echo -e "${GREY}[--] Could not enumerate more Domain Controllers${NC}"
+  DC_COUNT=0
+fi
+
+echo ""
+
 # Check and patch GriffonAD
 GRIFFON_PATH="/workspace/GriffonAD"
 if [ ! -d "$GRIFFON_PATH" ]; then
@@ -240,21 +264,57 @@ else
   echo -e "${GREY}[--] Certipy not found, skipping ADCS check${NC}"
 fi
 
-# LDAP Signing & Channel Binding
-LDAP_CHECK=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
-LDAP_SIGNING_OFF=$(echo "$LDAP_CHECK" | grep -q "signing:None" && echo "1")
-LDAP_CB_OFF=$(echo "$LDAP_CHECK" | grep -qE "channel binding:(No|Never)" && echo "1")
-
-if [ "$LDAP_SIGNING_OFF" = "1" ] && [ "$LDAP_CB_OFF" = "1" ]; then
-  echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced (NTLM Relay to LDAP possible)${NC}"
-elif [ "$LDAP_SIGNING_OFF" = "1" ]; then
-  echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
-  echo -e "${GREEN}       └─ Not Exploitable: Channel Binding enabled${NC}"
-elif [ "$LDAP_CB_OFF" = "1" ]; then
-  echo -e "${RED}[KO] LDAP Channel Binding NOT enforced${NC}"
-  echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
+# LDAP Signing & Channel Binding - Multi-DC Check
+if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
+  echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldap_security_check.csv"
+  
+  VULN_DCS=""
+  VULN_COUNT=0
+  
+  while IFS=: read -r hostname ip; do
+    result=$(timeout 10 netexec ldap $ip -u "$USERNAME" -p "$PASSWORD" --timeout 5 2>&1 | grep -oP '(signing:\w+).*(channel binding:\w+)')
+    
+    if [ -z "$result" ]; then
+      echo "$hostname,$ip,TIMEOUT,TIMEOUT" >> "$OUTPUT_DIR/ldap_security_check.csv"
+    else
+      signing=$(echo "$result" | grep -oP 'signing:\K\w+')
+      cb=$(echo "$result" | grep -oP 'channel binding:\K\w+')
+      echo "$hostname,$ip,$signing,$cb" >> "$OUTPUT_DIR/ldap_security_check.csv"
+      
+      if [ "$signing" = "None" ] && [ "$cb" = "Never" ]; then
+        VULN_COUNT=$((VULN_COUNT + 1))
+        VULN_DCS="${VULN_DCS}${RED}       └─ ${hostname} (${ip})${NC}\n"
+      fi
+    fi
+  done < "$OUTPUT_DIR/all_dcs.txt"
+  
+  if [ $VULN_COUNT -gt 0 ]; then
+    if [ $VULN_COUNT -eq $DC_COUNT ]; then
+      echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + Channel Binding NOT enforced → ldap_security_check.csv${NC}"
+    else
+      echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + Channel Binding → ldap_security_check.csv${NC}"
+      echo -e "$VULN_DCS"
+    fi
+  else
+    echo -e "${GREEN}[OK] All DCs have LDAP Signing + Channel Binding enforced${NC}"
+  fi
 else
-  echo -e "${GREEN}[OK] LDAP Signing + Channel Binding enforced${NC}"
+  # Fallback: single DC check
+  LDAP_CHECK=$(netexec ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
+  LDAP_SIGNING_OFF=$(echo "$LDAP_CHECK" | grep -q "signing:None" && echo "1")
+  LDAP_CB_OFF=$(echo "$LDAP_CHECK" | grep -qE "channel binding:(No|Never)" && echo "1")
+  
+  if [ "$LDAP_SIGNING_OFF" = "1" ] && [ "$LDAP_CB_OFF" = "1" ]; then
+    echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced${NC}"
+  elif [ "$LDAP_SIGNING_OFF" = "1" ]; then
+    echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
+    echo -e "${GREEN}       └─ Not Exploitable: Channel Binding enabled${NC}"
+  elif [ "$LDAP_CB_OFF" = "1" ]; then
+    echo -e "${RED}[KO] LDAP Channel Binding NOT enforced${NC}"
+    echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
+  else
+    echo -e "${GREEN}[OK] LDAP Signing + Channel Binding enforced${NC}"
+  fi
 fi
 
 # Scan subnet for relay targets (exclude DCs)
@@ -290,16 +350,50 @@ else
 fi
 echo -e "${GREY}       └─ nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --gen-relay-list '${OUTPUT_DIR}/relay_targets.txt'${NC}"
 
-# SMB Signing Check on DC
-SMB_DC_CHECK=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
-if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
-  echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
-else
-  echo -e "${RED}[KO] SMB Signing NOT required on DC${NC}"
-  if [ "$RELAY_COUNT" -gt 0 ]; then
-    echo -e "${RED}       └─ Coerce computers from relay_targets.txt to DC${NC}"
+# SMB Signing Check on all DCs
+if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
+  
+  VULN_SMB_DCS=""
+  VULN_SMB_COUNT=0
+  
+  while IFS=: read -r hostname ip; do
+    smb_check=$(timeout 10 netexec smb $ip -u "$USERNAME" -p "$PASSWORD" --timeout 5 2>&1 | grep -oP 'signing:(True|False)')
+    signing=$(echo "$smb_check" | grep -oP 'signing:\K\w+')
+    
+    if [ "$signing" != "True" ]; then
+      VULN_SMB_COUNT=$((VULN_SMB_COUNT + 1))
+      VULN_SMB_DCS="${VULN_SMB_DCS}${RED}       └─ ${hostname} (${ip})${NC}\n"
+    fi
+  done < "$OUTPUT_DIR/all_dcs.txt"
+  
+  if [ $VULN_SMB_COUNT -gt 0 ]; then
+    if [ $VULN_SMB_COUNT -eq $DC_COUNT ]; then
+      echo -e "${RED}[KO] All $DC_COUNT DCs: SMB Signing NOT required${NC}"
+    else
+      echo -e "${RED}[KO] $VULN_SMB_COUNT/$DC_COUNT DC(s) without required SMB Signing${NC}"
+      printf "$VULN_SMB_DCS"
+    fi
+    
+    if [ "$RELAY_COUNT" -gt 0 ]; then
+      echo -e "${RED}       └─ Coerce computers from relay_targets.txt to vulnerable DC(s)${NC}"
+    else
+      echo -e "${GREEN}       └─ Not exploitable: No relay targets without signing in relay_targets.txt found${NC}"
+    fi
   else
-    echo -e "${GREEN}       └─ Not exploitable: No relay targets without signing in relay_targets.txt found${NC}"
+    echo -e "${GREEN}[OK] All DCs have SMB Signing required${NC}"
+  fi
+else
+  # Fallback: single DC check
+  SMB_DC_CHECK=$(netexec smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
+  if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
+    echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
+  else
+    echo -e "${RED}[KO] SMB Signing NOT required on DC${NC}"
+    if [ "$RELAY_COUNT" -gt 0 ]; then
+      echo -e "${RED}       └─ Coerce computers from relay_targets.txt to DC${NC}"
+    else
+      echo -e "${GREEN}       └─ Not exploitable: No relay targets without signing in relay_targets.txt found${NC}"
+    fi
   fi
 fi
 
