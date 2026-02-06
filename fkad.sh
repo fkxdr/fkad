@@ -106,19 +106,20 @@ fi
 CURRENT_PATH=$(pwd)
 OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M)"
 mkdir -p "$OUTPUT_DIR"
-exec > >(tee "$OUTPUT_DIR/fkad_report.txt") 2>&1
+exec > >(tee >(sed 's/\x1b\[[0-9;]*m//g' > "$OUTPUT_DIR/fkad_report.txt"))
 
 echo -e "${BLUE}[*] DC FQDN   : ${DC_FQDN}${NC}"
 echo -e "${BLUE}[*] DC IP     : $DC_IP${NC}"
 echo -e "${BLUE}[*] Domain    : $DOMAIN${NC}"
 echo ""
 
-# Get all Domain Controllers in environment
-ALL_DCS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+# Get all Domain Controllers in environment (cache both FQDN + sAMAccountName)
+DC_LDAP_RAW=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
   "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" \
-  dNSHostName 2>/dev/null | \
-  grep "^dNSHostName:" | awk '{print $2}' | sort -u)
+  dNSHostName sAMAccountName 2>/dev/null)
+ALL_DCS=$(echo "$DC_LDAP_RAW" | grep "^dNSHostName:" | awk '{print $2}' | sort -u)
+DC_SAMNAMES=$(echo "$DC_LDAP_RAW" | grep "^sAMAccountName:" | awk '{print tolower($2)}')
   
 if [ ! -z "$ALL_DCS" ]; then
   > "$OUTPUT_DIR/all_dcs.txt"
@@ -420,13 +421,22 @@ else
   fi
 fi
 
-# Unconstrained Delegation Check
+# Unconstrained Delegation Check (uses DC_SAMNAMES cached from initial DC enumeration)
 UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
   "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | \
   grep "^sAMAccountName:" | awk '{print $2}')
 
-NON_DC_UNCON=$(echo "$UNCON_SYSTEMS" | grep -vi 'DC' | grep -v "^$")
+NON_DC_UNCON=""
+while IFS= read -r system; do
+  [ -z "$system" ] && continue
+  system_lower=$(echo "$system" | tr '[:upper:]' '[:lower:]')
+  if ! echo "$DC_SAMNAMES" | grep -qx "$system_lower"; then
+    NON_DC_UNCON="${NON_DC_UNCON}${system}\n"
+  fi
+done <<< "$UNCON_SYSTEMS"
+
+NON_DC_UNCON=$(echo -e "$NON_DC_UNCON" | grep -v "^$")
 NON_DC_COUNT=$(echo "$NON_DC_UNCON" | grep -v "^$" | wc -l)
 
 if [ "$NON_DC_COUNT" -gt 0 ]; then
@@ -890,7 +900,7 @@ fi
 
 # Email Security (SPF/DMARC)
 if [[ "$DOMAIN" == *.local ]]; then
-  echo -e "${GREY}[--] Email Security: Skipped (.local domain, internal only)${NC}"
+  echo -e "${GREY}[--] SPD and DMARC skipped (.local domain is internal only)${NC}"
 else
   SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
   DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
@@ -903,7 +913,8 @@ else
     echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
     echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
   elif [ -z "$DMARC_CHECK" ]; then
-    echo -e "${RED}[KO] No DMARC record (SPF without enforcement, no spoofing possible)${NC}"
+    echo -e "${RED}[KO] No DMARC record (SPF present but unenforced — header-from spoofing possible)${NC}"
+    echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
   else
     echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
   fi
