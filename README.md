@@ -14,7 +14,7 @@ chmod +x fkad.sh
 ```
 
 > [!NOTE]
-> The -d parameter accepts either a DC IP address or a domain name. If a domain is provided, fkad resolves the PDC via SRV record (_ldap._tcp.pdc._msdcs) automatically.
+> The -fast flag limits extensive checks in AD environments with a lot of dead objects.
 
 <img width="2208" height="1166" alt="screen" src="https://github.com/user-attachments/assets/c5742863-ab7e-400a-a386-f3556759f57c" />
 
@@ -23,6 +23,7 @@ Example:
 ```bash
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d 10.10.2.13
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com
+./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com -fast
 ```
 
 ## Follow-Up Enumeration
