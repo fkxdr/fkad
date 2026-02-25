@@ -30,7 +30,7 @@ Example:
 For most assessments it makes sense to follow up enumeration on a provided device. This includes, but is not limited to:
 
 - [ ] Pingcastle
-- [ ] Privs + Create Folder
+- [ ] Privs + create Folder
 ```ps
 New-Item -ItemType Directory -Path "$env:USERPROFILE\Downloads\fkad" -Force; whoami /priv | Out-File "$env:USERPROFILE\Downloads\fkad\privs.txt"
 ```
