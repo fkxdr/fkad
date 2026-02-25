@@ -40,7 +40,7 @@ Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubu
 ```
 - [ ] WSL Access Review
 ```cmd
-wsl --list --verbose | Out-File "$out\wsl.txt"
+wsl --list --verbose | Out-File "$env:USERPROFILE\Downloads\fkad\wsl.txt"
 ```
 - [ ] PrivEscCheck.ps1
 ```powershell
