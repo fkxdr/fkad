@@ -94,6 +94,11 @@ gowitness scan nmap -f nmap.xml --open-only --service-contains http
 nxc mssql <subnet> -u <user> -p <pass> -M mssql_priv
 ```
 - [ ] manspider (snaffler from attack box)
+```sh
+manspider <subnet> -u user -p pass \
+  -e config xml ini txt ps1 bat cmd sql conf yml yaml json key pem pfx kdbx \
+  -c password passwd pwd secret key token connectionstring apikey aws_access smtp
+```
 
 ## Security / Legal
 
