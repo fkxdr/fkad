@@ -40,13 +40,23 @@ powershell -ep bypass -c "Invoke-Expression -Command (Invoke-RestMethod 'https:/
 ```
 - [ ] Seatbelt
 - [ ] WinPEAS
+```
+IEX (iwr 'https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1')
+```
 - [ ] HardeningKitty
+```powershell
+IEX (iwr 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.ps1')
+```
 - [ ] msicrab
 - [ ] ScriptSentry - Logonscripts
-```
-TODO
+```powershell
+IEX (iwr 'https://raw.githubusercontent.com/techspence/ScriptSentry/main/ScriptSentry.ps1')
 ```
 - [ ] Applocker Inspector
+```powershell
+IEX (iwr 'https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1')
+Invoke-AppLockerInspector -Verbose | Format-Table -Auto
+```
 - [ ] WSL Access Review
 ```cmd
 wsl --list --verbose
@@ -72,6 +82,17 @@ Most likely these should be run across the network as well.
 - [ ] Nessus
 - [ ] Responder
 - [ ] GoWitness
+```sh
+nmap -p80,443 -oX nmap.xml 10.192.14.0/24
+gowitness scan nmap -f nmap.xml --open-only --service-contains http
+```
+- [ ] nxc
+```sh
+# Share enumeratio
+nxc smb <subnet> -u <user> -p <pass> --shares
+# MSSQL privilege escalation
+nxc mssql <subnet> -u <user> -p <pass> -M mssql_priv
+```
 
 ## Security / Legal
 
