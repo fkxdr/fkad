@@ -153,16 +153,6 @@ if [ ! -d "$GRIFFON_PATH" ]; then
   fi
 fi
 
-# Apply patch if needed (even if already installed)
-GRIFFON_DB="$GRIFFON_PATH/griffonad/lib/database.py"
-# Fallback for older versions
-[ ! -f "$GRIFFON_DB" ] && GRIFFON_DB="$GRIFFON_PATH/lib/database.py"
-
-if [ -f "$GRIFFON_DB" ] && ! grep -q "if gpo_guid and gpo_guid in self.objects_by_sid" "$GRIFFON_DB"; then
-  sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.append(o.dn)/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.append(o.dn)/' "$GRIFFON_DB"
-  sed -i 's/self.objects_by_sid\[gpo_guid\].gpo_links_to_ou.sort()/if gpo_guid and gpo_guid in self.objects_by_sid: self.objects_by_sid[gpo_guid].gpo_links_to_ou.sort()/' "$GRIFFON_DB"
-fi
-
 # ADCS/PKI Vulnerability Check
 if [ -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
   CERTIPY_CMD="/opt/tools/Certipy/venv/bin/certipy"
