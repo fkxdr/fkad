@@ -1,6 +1,3 @@
-# fkad.ps1 - Local Enumeration Script
-# by @fkxdr
-
 $DATE = Get-Date -Format "yyyyMMdd_HHmm"
 $USER = $env:USERNAME
 $OUT = "$env:USERPROFILE\Downloads\fkad-$DATE-$USER"
@@ -37,35 +34,25 @@ Banner
 # --- Basic Recon ---
 Run "Privileges"        { whoami /priv }                                          "whoami_priv.txt"
 Run "Whoami All"        { whoami /all }                                           "whoami_all.txt"
-Run "Systeminfo"        { systeminfo }                                            "systeminfo.txt"
 Run "Env Variables"     { Get-ChildItem Env: | Format-Table -AutoSize }           "env_vars.txt"
 
-# --- Network ---
-Run "IPConfig"          { ipconfig /all }                                         "ipconfig.txt"
-Run "Netstat"           { netstat -ano }                                          "netstat.txt"
+# --- Network ---                      "netstat.txt"
 Run "Hosts File"        { Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" } "hosts.txt"
 Run "DNS Cache"         { ipconfig /displaydns }                                  "dns_cache.txt"
 Run "Firewall Rules"    { netsh advfirewall firewall show rule name=all }         "firewall_rules.txt"
 
 # --- Users & Groups ---
-Run "Local Users"       { net user }                                              "local_users.txt"
-Run "Local Admins"      { net localgroup administrators }                         "local_admins.txt"
-Run "All Local Groups"  { net localgroup }                                        "local_groups.txt"
+Run "Local Admins"      { net localgroup administrators }                         "local_admins.txt"                "local_groups.txt"
 Run "Logged On Users"   { query user 2>$null }                                    "logged_on_users.txt"
 
 # --- System ---
 Run "Processes"         { Get-Process | Select-Object Name,Id,Path | Format-Table -AutoSize } "processes.txt"
 Run "Services"          { Get-Service | Format-Table -AutoSize }                  "services.txt"
 Run "Scheduled Tasks"   { Get-ScheduledTask | Format-Table -AutoSize }            "scheduled_tasks.txt"
-Run "Installed Software"{ Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" | Select-Object DisplayName,DisplayVersion,Publisher | Sort-Object DisplayName } "installed_software.txt"
 Run "Startup Items"     { Get-CimInstance Win32_StartupCommand | Format-Table -AutoSize } "startup_items.txt"
-Run "Shares"            { net share }                                             "shares.txt"
-Run "Mapped Drives"     { net use }                                               "mapped_drives.txt"
 
 # --- Security ---
-Run "Defender Status"   { Get-MpComputerStatus }                                  "defender_status.txt"
 Run "WSL"               { wsl --list --verbose 2>&1 }                            "wsl.txt"
-Run "AppLocker Policy"  { Get-AppLockerPolicy -Effective -Xml 2>&1 }             "applocker.xml"
 
 # --- MSI Enum ---
 Run "MSI Packages" {
@@ -74,10 +61,6 @@ Run "MSI Packages" {
     Select-Object Name, Vendor, Version, PackageCache
 } "msi_list.txt"
 
-Write-Host ""
-
-# --- IEX Tools ---
-Write-Host "[*] Running remote tools..." -ForegroundColor DarkGray
 Write-Host ""
 
 # fkmde
