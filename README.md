@@ -46,9 +46,14 @@ wsl --list --verbose | Out-File "$out\wsl.txt"
 ```powershell
 powershell -ep bypass -c "Invoke-Expression -Command (Invoke-RestMethod 'https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report PrivescCheck_$($env:COMPUTERNAME) -Format TXT"
 ```
+- [ ] MSSQL
+```powershell
+IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
+Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status -eq "Accessible"} | Get-SQLServerPrivEscRowThreated | Out-File "$env:USERPROFILE\Downloads\fkad\mssql_priv.txt"
+```
 - [ ] Seatbelt
 - [ ] WinPEAS
-```
+```powershell
 IEX (iwr 'https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1')
 ```
 - [ ] HardeningKitty
@@ -88,16 +93,6 @@ Most likely these should be run across the network as well.
 ```sh
 nmap -p80,443 -oX nmap.xml 10.192.14.0/24
 gowitness scan nmap -f nmap.xml --open-only --service-contains http
-```
-- [ ] MSSQL privilege escalation
-```sh
-nxc mssql <subnet> -u <user> -p <pass> -M mssql_priv
-```
-- [ ] manspider (snaffler from attack box)
-```sh
-manspider <subnet> -u user -p pass \
-  -e config xml ini txt ps1 bat cmd sql conf yml yaml json key pem pfx kdbx \
-  -c password passwd pwd secret key token connectionstring apikey aws_access smtp
 ```
 
 ## Security / Legal
