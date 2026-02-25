@@ -81,8 +81,7 @@ SharpSCCM.exe exec -rid  -p "C:\Windows\System32\cmd.exe"
 ```powershell
 SharpSCOM.exe get-server
 SharpSCOM.exe get-creds
-```
-- [ ] Watson
+``
 
 ## Other Tools
 
