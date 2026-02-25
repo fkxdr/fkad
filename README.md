@@ -65,17 +65,14 @@ SharpSCOM.exe get-server
 SharpSCOM.exe get-creds
 ```
 
+## Other Tools
+
+Most likely these should be run across the network as well.
+
+- [ ] Nessus
+- [ ] Responder
+- [ ] GoWitness
 
 ## Security / Legal
 
 This tool is for authorized security testing, research, and defensive validation only. Do not use it against systems you do not own or do not have explicit permission to test. The author is not responsible for misuse.
-
-## Credits
-
-- [Ghost SPNs - Semperis](https://www.semperis.com/blog/exploiting-ghost-spns-and-kerberos-reflection-for-smb-server-privilege-elevation/)
-- [BloodHound](https://github.com/BloodHoundAD/BloodHound) / [bloodhound-python](https://github.com/dirkjanm/BloodHound.py)
-- [GriffonAD](https://github.com/shellinvictus/GriffonAD)
-- [Certipy](https://github.com/ly4k/Certipy)
-- [NetExec](https://github.com/Pennyw0rth/NetExec)
-- [PetitPotam](https://github.com/topotam/PetitPotam)
-- [kerbrute](https://github.com/ropnop/kerbrute)
