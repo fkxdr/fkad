@@ -39,7 +39,7 @@ if ($isAdmin) {
     Write-Host "[OK] Not running as Administrator" -ForegroundColor Green
 }
 
-# PS2 downgrade check
+# PS2 downgrade
 try {
     $ps2 = Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -ErrorAction SilentlyContinue
     $net2 = Get-WindowsOptionalFeature -Online -FeatureName NetFx3 -ErrorAction SilentlyContinue
@@ -59,7 +59,15 @@ try {
     }
 }
 
-# WSL check
+# Constrained Language
+$clm = $ExecutionContext.SessionState.LanguageMode
+if ($clm -ne 'FullLanguage') {
+    Write-Host "[OK] Constrained Language Mode active: $clm" -ForegroundColor Green
+} else {
+    Write-Host "[KO] Language Mode: FullLanguage (no CLM)" -ForegroundColor Red
+}
+
+# WSL
 $wsl = wsl --list --verbose 2>&1
 if ($wsl -match "NAME") {
     Write-Host "[KO] WSL is installed and has distributions" -ForegroundColor Red
