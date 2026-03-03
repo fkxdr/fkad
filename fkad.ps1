@@ -89,7 +89,7 @@ Run "DNS Cache"         { ipconfig /displaydns }                                
 Run "Firewall Rules"    { netsh advfirewall firewall show rule name=all }         "firewall_rules.txt"
 
 # Users & Groups
-Run "Local Admins"      { net localgroup administrators }                         "local_admins.txt"                "local_groups.txt"
+Run "Local Admins"      { net localgroup administrators }                         "local_admins.txt"
 Run "Logged On Users"   { query user 2>$null }                                    "logged_on_users.txt"
 
 # System
