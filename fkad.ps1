@@ -31,8 +31,6 @@ function Run {
 
 Banner
 
-
-# --- Pre-flight Checks ---
 # Admin check
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($isAdmin) {
@@ -60,32 +58,39 @@ try {
         Write-Host "[OK] PowerShell downgrade not possible" -ForegroundColor Green
     }
 }
+
+# WSL check
+$wsl = wsl --list --verbose 2>&1
+if ($wsl -match "NAME") {
+    Write-Host "[KO] WSL is installed and has distributions" -ForegroundColor Red
+    $wsl | Where-Object { $_ -match "\S" } | ForEach-Object { Write-Host "       └─ $_" -ForegroundColor DarkGray }
+} else {
+    Write-Host "[OK] WSL not installed or no distributions" -ForegroundColor Green
+}
+
 Write-Host ""
 
-# --- Basic Recon ---
+# Basic Recon
 Run "Privileges"        { whoami /priv }                                          "whoami_priv.txt"
 Run "Whoami All"        { whoami /all }                                           "whoami_all.txt"
 Run "Env Variables"     { Get-ChildItem Env: | Format-Table -AutoSize }           "env_vars.txt"
 
-# --- Network ---                      "netstat.txt"
+# Network
 Run "Hosts File"        { Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" } "hosts.txt"
 Run "DNS Cache"         { ipconfig /displaydns }                                  "dns_cache.txt"
 Run "Firewall Rules"    { netsh advfirewall firewall show rule name=all }         "firewall_rules.txt"
 
-# --- Users & Groups ---
+# Users & Groups
 Run "Local Admins"      { net localgroup administrators }                         "local_admins.txt"                "local_groups.txt"
 Run "Logged On Users"   { query user 2>$null }                                    "logged_on_users.txt"
 
-# --- System ---
+# System
 Run "Processes"         { Get-Process | Select-Object Name,Id,Path | Format-Table -AutoSize } "processes.txt"
 Run "Services"          { Get-Service | Format-Table -AutoSize }                  "services.txt"
 Run "Scheduled Tasks"   { Get-ScheduledTask | Format-Table -AutoSize }            "scheduled_tasks.txt"
 Run "Startup Items"     { Get-CimInstance Win32_StartupCommand | Format-Table -AutoSize } "startup_items.txt"
 
-# --- Security ---
-Run "WSL"               { wsl --list --verbose 2>&1 }                            "wsl.txt"
-
-# --- MSI Enum ---
+# MSI Enum
 Run "MSI Packages" {
     Get-WmiObject -Class Win32_Product |
     Where-Object { $_.Vendor -notin @("Microsoft Corporation","Microsoft","Python Software Foundation") } |
