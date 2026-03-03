@@ -33,7 +33,7 @@ For most assessments it makes sense to follow up enumeration on a provided devic
 - [ ] Pingcastle
 - [ ] fkad.ps1
 ```ps
-powershell -ep bypass -c "IEX (iwr 'https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
+powershell -ep bypass -c "IEX (iwr 'https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1').Content"
 ```
 - [ ] fkmde - Microsoft Defender
 ```ps
