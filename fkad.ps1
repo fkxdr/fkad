@@ -48,7 +48,7 @@ try {
         Write-Host "[OK] PowerShell downgrade not possible" -ForegroundColor Green
     }
 } catch {
-    Write-Host "[OK] PowerShell downgrade check skipped" -ForegroundColor Green
+    Write-Host "[--] PowerShell downgrade check skipped" -ForegroundColor Gray
 }
 
 $clm = $ExecutionContext.SessionState.LanguageMode
@@ -119,6 +119,7 @@ if ($msiOutput) {
 
 Write-Host ""
 
+# fkmde
 try {
     & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkmde/refs/heads/main/fkmde.ps1') } *>&1 | Out-File "$OUT\fkmde.txt" -Encoding utf8
     Write-Host "[OK] fkmde -> fkmde.txt" -ForegroundColor Green
@@ -126,8 +127,9 @@ try {
     Write-Host "[--] fkmde failed: $_" -ForegroundColor DarkGray
 }
 
+# PrivescCheck
 try {
-    IEX ((New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'))
+    IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1')
     Invoke-PrivescCheck -Extended -Audit -Report "$OUT\PrivescCheck_$($env:COMPUTERNAME)" -Format TXT | Out-Null
     Write-Host "[OK] PrivescCheck -> PrivescCheck_$($env:COMPUTERNAME).txt" -ForegroundColor Green
 } catch {
