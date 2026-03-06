@@ -3,6 +3,10 @@ $USER = $env:USERNAME
 $OUT = "$env:USERPROFILE\Downloads\fkad-$DATE-$USER"
 New-Item -ItemType Directory -Path $OUT -Force | Out-Null
 
+# Start logging
+$logFile = "$OUT\fkad-run.log"
+Start-Transcript -Path $logFile -Append -IncludeInvocationHeader
+
 function Banner {
     Write-Host ""
     Write-Host "       _____         _____         _____         _____         _____" -ForegroundColor DarkGray
@@ -82,7 +86,9 @@ if ($AMRunningMode -eq "Normal" -or $AMRunningMode -eq "EDR Blocked") {
 
 # Real-Time Protection
 try {
-    if ($defenderStatus.RealTimeProtectionEnabled -eq $true) {
+    $realTimeEnabled = $defenderStatus.RealTimeProtectionEnabled
+    $monitoringDisabled = $DefenderPreferences.DisableRealtimeMonitoring
+    if ($realTimeEnabled -eq $true -or $monitoringDisabled -eq $false) {
         Write-Host "       - Real Time Protection is enabled" -ForegroundColor Green
     } else {
         Write-Host "       [KO] Real Time Protection is disabled" -ForegroundColor DarkRed
@@ -117,6 +123,23 @@ try {
     Write-Host "Microsoft Defender for Endpoint Network Protection :          [??] Unknown" -ForegroundColor DarkYellow
 }
 
+# Tamper Protection
+$TamperProtectionStatus = $DefenderStatus.IsTamperProtected
+$TamperProtectionManage = $DefenderStatus.TamperProtectionSource
+
+if ($TamperProtectionStatus -eq $true) {
+    Write-Host "Tamper Protection Status :                                    [OK] Enabled" -ForegroundColor Green
+} else {
+    Write-Host "Tamper Protection Status :                                    [KO] Disabled" -ForegroundColor DarkRed
+}
+
+# Behavior Monitoring
+if (-not $DefenderPreferences.DisableBehaviorMonitoring) {
+    Write-Host "Behavior Monitoring :                                         [OK] Enabled" -ForegroundColor Green
+} else {
+    Write-Host "Behavior Monitoring :                                         [KO] Disabled" -ForegroundColor DarkRed
+}
+
 # Edge SmartScreen
 $edgeSSvalue = $null
 $policyPaths = @(
@@ -137,78 +160,61 @@ if ($edgeSSvalue -eq 0) {
     Write-Host "Microsoft Edge SmartScreen :                                  [OK] Enabled" -ForegroundColor Green
 }
 
-# Tamper Protection
-$TamperProtectionStatus = $DefenderStatus.IsTamperProtected
-$TamperProtectionManage = $DefenderStatus.TamperProtectionSource
-
-if ($TamperProtectionStatus -eq $true) {
-    Write-Host "Tamper Protection Status :                                    [OK] Enabled" -ForegroundColor Green
+# Exclusions
+if ($isAdmin) {
+    $exclusionExtensions = $DefenderPreferences.ExclusionExtension
+    $exclusionPaths = $DefenderPreferences.ExclusionPath
+    $exclusionProcesses = $DefenderPreferences.ExclusionProcess
+    
+    $hasAnyExclusions = ($exclusionExtensions -and $exclusionExtensions.Count -gt 0) -or `
+                        ($exclusionPaths -and $exclusionPaths.Count -gt 0) -or `
+                        ($exclusionProcesses -and $exclusionProcesses.Count -gt 0)
+    
+    if ($hasAnyExclusions) {
+        Write-Host "[KO]   Exclusions found" -ForegroundColor DarkRed
+        if ($exclusionExtensions -and $exclusionExtensions.Count -gt 0) {
+            Write-Host "       - Extension exclusions found" -ForegroundColor DarkRed
+        }
+        if ($exclusionPaths -and $exclusionPaths.Count -gt 0) {
+            Write-Host "       - Path exclusions found" -ForegroundColor DarkRed
+        }
+        if ($exclusionProcesses -and $exclusionProcesses.Count -gt 0) {
+            Write-Host "       - Process exclusions found" -ForegroundColor DarkRed
+        }
+    } else {
+        Write-Host "[OK]   No exclusions found" -ForegroundColor Green
+    }
 } else {
-    Write-Host "Tamper Protection Status :                                    [KO] Disabled" -ForegroundColor DarkRed
+    Write-Host "       - Exclusions require more permissions to view" -ForegroundColor DarkGray
 }
 
-if ($TamperProtectionManage -eq "Intune") {
-    Write-Host "Tamper Protection Source :                                    [OK] Intune" -ForegroundColor Green
-} elseif ($TamperProtectionManage -eq "ATP") {
-    Write-Host "Tamper Protection Source :                                    [OK] MDE Tenant" -ForegroundColor Green
-} elseif ($TamperProtectionManage -eq "UI") {
-    Write-Host "Tamper Protection Source :                                    [KO] Manual via UI" -ForegroundColor DarkRed
+Write-Host ""
+
+# BitLocker
+$bitlockerStatus = (New-Object -ComObject Shell.Application).NameSpace('C:').Self.ExtendedProperty('System.Volume.BitLockerProtection')
+if ($bitlockerStatus -eq 1) {
+    Write-Host "[OK]   C: drive is BitLocker encrypted" -ForegroundColor Green
+} elseif ($bitlockerStatus -eq 2) {
+    Write-Host "[KO]   C: drive is not BitLocker encrypted" -ForegroundColor DarkRed
 } else {
-    Write-Host "Tamper Protection Source :                                    [??] Unknown" -ForegroundColor DarkYellow
+    Write-Host "[??]   C: drive BitLocker encryption is unknown" -ForegroundColor DarkYellow
 }
 
-# IOAV Protection
-if (-not $DefenderPreferences.DisableIOAVProtection) {
-    Write-Host "IOAV Protection :                                             [OK] Enabled" -ForegroundColor Green
-} else {
-    Write-Host "IOAV Protection :                                             [KO] Disabled" -ForegroundColor DarkRed
-}
-
-# Email Scanning
-if (-not $DefenderPreferences.DisableEmailScanning) {
-    Write-Host "Email Scanning :                                              [OK] Enabled" -ForegroundColor Green
-} else {
-    Write-Host "Email Scanning :                                              [KO] Disabled" -ForegroundColor DarkRed
-}
-
-# Realtime Monitoring
-if (-not $DefenderPreferences.DisableRealtimeMonitoring) {
-    Write-Host "Realtime Monitoring :                                         [OK] Enabled" -ForegroundColor Green
-} else {
-    Write-Host "Realtime Monitoring :                                         [KO] Disabled" -ForegroundColor DarkRed
-}
-
-# Behavior Monitoring
-if (-not $DefenderPreferences.DisableBehaviorMonitoring) {
-    Write-Host "Behavior Monitoring :                                         [OK] Enabled" -ForegroundColor Green
-} else {
-    Write-Host "Behavior Monitoring :                                         [KO] Disabled" -ForegroundColor DarkRed
-}
 
 # Memory Integrity
 try {
     if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity") {
         $hvciStatus = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity").Enabled
         if ($hvciStatus -eq 1) {
-            Write-Host "Memory Integrity :                                            [OK] Enabled" -ForegroundColor Green
+            Write-Host "[KO]   Memory Integrity is enabled" -ForegroundColor Green
         } else {
-            Write-Host "Memory Integrity :                                            [KO] Disabled" -ForegroundColor DarkRed
+            Write-Host "[KO]   Memory Integrity is disabled" -ForegroundColor DarkRed
         }
     } else {
-        Write-Host "Memory Integrity :                                            [??] Missing Permissions" -ForegroundColor DarkYellow
+        Write-Host "[--]   Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
     }
 } catch {
-    Write-Host "Memory Integrity :                                            [??] Unknown" -ForegroundColor DarkYellow
-}
-
-# BitLocker
-$bitlockerStatus = (New-Object -ComObject Shell.Application).NameSpace('C:').Self.ExtendedProperty('System.Volume.BitLockerProtection')
-if ($bitlockerStatus -eq 1) {
-    Write-Host "Bitlocker Encrypted C Drive :                                 [OK] Enabled" -ForegroundColor Green
-} elseif ($bitlockerStatus -eq 2) {
-    Write-Host "Bitlocker Encrypted C Drive :                                 [KO] Disabled" -ForegroundColor DarkRed
-} else {
-    Write-Host "Bitlocker Encrypted C Drive :                                 [??] Unknown" -ForegroundColor DarkYellow
+    Write-Host "M[--]   Memory Integrity is unknown" -ForegroundColor DarkYellow
 }
 
 # WDAC
@@ -242,18 +248,17 @@ try {
 try {
     $applockerService = Get-Service -Name "AppIDSvc" -ErrorAction Stop
     if ($applockerService.Status -eq "Running") {
-        Write-Host "AppLocker Service (AppIDSvc) :                                [OK] Running" -ForegroundColor Green
+        Write-Host "[OK] AppLocker Service (AppIDSvc) is running" -ForegroundColor Green
     } else {
-        Write-Host "AppLocker Service (AppIDSvc) :                                [KO] Not Running" -ForegroundColor DarkRed
+        Write-Host "[KO] AppLocker Service (AppIDSvc) is not running" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "AppLocker Service (AppIDSvc) :                                [KO] Not found" -ForegroundColor DarkRed
+    Write-Host "[KO] AppLocker Service (AppIDSvc) was not found" -ForegroundColor DarkRed
 }
 
 $applockerRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2"
 $applockerConfigured = $false
 $applockerCollections = @("Exe", "Msi", "Script", "Dll", "Appx")
-
 foreach ($collection in $applockerCollections) {
     $collPath = "$applockerRegPath\$collection"
     if (Test-Path $collPath) {
@@ -264,39 +269,9 @@ foreach ($collection in $applockerCollections) {
         }
     }
 }
-
 if (-not $applockerConfigured) {
-    Write-Host "AppLocker Rules :                                             [KO] No rules configured" -ForegroundColor DarkRed
+    Write-Host "       [KO] No rules are configured" -ForegroundColor DarkRed
 }
-
-Write-Host ""
-
-# Exclusions
-if ($isAdmin) {
-    $exclusionExtensions = $DefenderPreferences.ExclusionExtension
-    if ($exclusionExtensions -eq $null -or $exclusionExtensions.Count -eq 0) {
-        Write-Host "Exclusion Extensions :                                        [OK] No exclusions found" -ForegroundColor Green
-    } else {
-        Write-Host "Exclusion Extensions :                                        [KO] Exclusions found" -ForegroundColor DarkRed
-    }
-
-    $exclusionPaths = $DefenderPreferences.ExclusionPath
-    if ($exclusionPaths -eq $null -or $exclusionPaths.Count -eq 0) {
-        Write-Host "Exclusion Paths :                                             [OK] No exclusions found" -ForegroundColor Green
-    } else {
-        Write-Host "Exclusion Paths :                                             [KO] Exclusions found" -ForegroundColor DarkRed
-    }
-
-    $exclusionProcesses = $DefenderPreferences.ExclusionProcess
-    if ($exclusionProcesses -eq $null -or $exclusionProcesses.Count -eq 0) {
-        Write-Host "Exclusion Processes :                                         [OK] No exclusions found" -ForegroundColor Green
-    } else {
-        Write-Host "Exclusion Processes :                                         [KO] Exclusions found" -ForegroundColor DarkRed
-    }
-} else {
-    Write-Host "Bypassed Exclusions:                                          [OK] No permissions to view" -ForegroundColor Green
-}
-
 Write-Host ""
 
 # Check WSL
@@ -310,10 +285,10 @@ try {
             }
         }
     } else {
-        Write-Host "[OK]   WSL not installed or no distributions" -ForegroundColor Green
+        Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
     }
 } catch {
-    Write-Host "[OK]   WSL not installed or no distributions" -ForegroundColor Green
+    Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
 }
 
 Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
@@ -329,7 +304,7 @@ $combined += $adminOutput
 $combined += "`n=== LOGGED ON USERS ==="
 $combined += $loggedOutput
 $combined | Out-File "$OUT\users_and_admins.txt" -Encoding utf8
-Write-Host "[OK]    Users & Admins -> users_and_admins.txt" -ForegroundColor Green
+Write-Host "[OK]   Users & Admins -> users_and_admins.txt" -ForegroundColor Green
 
 Run "Scheduled Tasks" { Get-ScheduledTask | Format-Table -AutoSize } "scheduled_tasks.txt"
 
@@ -340,9 +315,9 @@ $startupOutput = Get-CimInstance Win32_StartupCommand |
 
 if ($startupOutput) {
     $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
-    Write-Host "[KO]    Startup items found -> startup_items.txt" -ForegroundColor Red
+    Write-Host "[KO]   Startup items found -> startup_items.txt" -ForegroundColor Red
 } else {
-    Write-Host "[OK]    No interesting startup items found" -ForegroundColor Green
+    Write-Host "[OK]   No interesting startup items found" -ForegroundColor Green
 }
 
 # MSI repairing
@@ -358,9 +333,9 @@ $msiOutput = Get-WmiObject -Class Win32_Product |
 
 if ($msiOutput) {
     $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
-    Write-Host "[KO]    MSI repair LPE possible -> msi_list.txt" -ForegroundColor Red
+    Write-Host "[KO]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkGray
 } else {
-    Write-Host "[OK]    No MSI repair LPE vectors found" -ForegroundColor Green
+    Write-Host "[OK]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
 
 Write-Host ""
@@ -369,18 +344,28 @@ Write-Host ""
 try {
     $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck_$($env:COMPUTERNAME)' -Format TXT *>&1"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]    PrivescCheck -> PrivescCheck_$($env:COMPUTERNAME).txt" -ForegroundColor Green
+    Write-Host "[OK]   PrivescCheck -> PrivescCheck_$($env:COMPUTERNAME).txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--] PrivescCheck failed: $_" -ForegroundColor Red
+    Write-Host "[--]   PrivescCheck failed: $_" -ForegroundColor DarkGray
 }
 
 # ScriptSentry
 try {
     $cmd = "IEX (Invoke-WebRequest 'https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1').Content; Invoke-ScriptSentry *>&1 | Out-File '$OUT\scriptsentry.txt' -Encoding utf8"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]    ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
+    Write-Host "[OK]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--]    ScriptSentry failed: $_" -ForegroundColor Red
+    Write-Host "[--]   ScriptSentry failed: $_" -ForegroundColor DarkGray
+}
+
+# HardeningKitty
+try {
+    $hardKittyDir = "$env:TEMP\HardeningKitty"
+    $cmd = "New-Item -ItemType Directory -Path '$hardKittyDir\lists' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.psm1' -OutFile '$hardKittyDir\HardeningKitty.psm1'; `$lists = @('finding_list_0x6d69636b_machine.csv','finding_list_0x6d69636b_user.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_machine.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_user.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_machine.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_user.csv','finding_list_cis_microsoft_windows_server_2019_1809_3.0.0_machine.csv','finding_list_cis_microsoft_windows_server_2022_22h2_3.0.0_machine.csv'); foreach (`$list in `$lists) { Invoke-WebRequest -Uri `"https://raw.githubusercontent.com/scipag/HardeningKitty/master/lists/`$list`" -OutFile `"$hardKittyDir\lists\`$list`" -ErrorAction SilentlyContinue }; Import-Module '$hardKittyDir\HardeningKitty.psm1' -Force; Invoke-HardeningKitty -Mode Audit -Report -ReportFile '$OUT\HardeningKitty.csv' *>&1"
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+    Write-Host "[OK]   HardeningKitty -> HardeningKitty.txt" -ForegroundColor Green
+} catch {
+    Write-Host "[--]   HardeningKitty failed: $_" -ForegroundColor DarkGray
 }
 
 # AppLocker Inspector
@@ -389,7 +374,7 @@ try {
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
     Write-Host "[OK]    AppLocker Inspector -> AppLockerPolicy.xml" -ForegroundColor Green
 } catch {
-    Write-Host "[--]    AppLocker Inspector failed: $_" -ForegroundColor Red
+    Write-Host "[--]    AppLocker Inspector failed: $_" -ForegroundColor DarkGray
 }
 
 # WinPEAS
@@ -398,15 +383,6 @@ try {
     Write-Host "[OK] WinPEAS -> winpeas.txt" -ForegroundColor Green
 } catch {
     Write-Host "[--] WinPEAS failed: $_" -ForegroundColor DarkGray
-}
-
-# HardeningKitty
-try {
-    IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.ps1')
-    Invoke-HardeningKitty -Mode Audit -Log -Report -ReportFile "$OUT\HardeningKitty.csv" | Out-Null
-    Write-Host "[OK] HardeningKitty -> HardeningKitty.csv" -ForegroundColor Green
-} catch {
-    Write-Host "[--] HardeningKitty failed: $_" -ForegroundColor DarkGray
 }
 
 # PowerUpSQL
@@ -421,3 +397,5 @@ try {
 Write-Host ""
 Write-Host "[OK] Done. Output folder: $OUT" -ForegroundColor Green
 Write-Host ""
+
+Stop-Transcript
