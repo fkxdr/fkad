@@ -368,36 +368,6 @@ try {
     Write-Host "[--]   HardeningKitty failed: $_" -ForegroundColor DarkGray
 }
 
-# AppLocker Inspector
-try {
-    $appLockerDir = "$env:TEMP\AppLockerInspector"
-    $cmd = "New-Item -ItemType Directory -Path '$appLockerDir' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1' -OutFile '$appLockerDir\Invoke-AppLockerInspector.ps1'; & '$appLockerDir\Invoke-AppLockerInspector.ps1' -Verbose | Out-File '$OUT\AppLockerPolicy.txt' -Encoding utf8"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   AppLocker Inspector -> AppLockerPolicy.txt" -ForegroundColor Green
-} catch {
-    Write-Host "[--]   AppLocker Inspector failed: $_" -ForegroundColor DarkGray
-}
-
-# WinPEAS
-try {
-    $winpeasDir = "$env:TEMP\WinPEAS"
-    $cmd = "New-Item -ItemType Directory -Path '$winpeasDir' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1' -OutFile '$winpeasDir\winPEAS.ps1'; & '$winpeasDir\winPEAS.ps1' *>&1 | Out-File '$OUT\winpeas.txt' -Encoding utf8"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   WinPEAS -> winpeas.txt" -ForegroundColor Green
-} catch {
-    Write-Host "[--]   WinPEAS failed: $_" -ForegroundColor DarkGray
-}
-
-# PowerUpSQL
-try {
-    $sqlDir = "$env:TEMP\PowerUpSQL"
-    $cmd = "New-Item -ItemType Directory -Path '$sqlDir' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1' -OutFile '$sqlDir\PowerUpSQL.ps1'; & '$sqlDir\PowerUpSQL.ps1'; Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {`$_.Status -eq 'Accessible'} | Get-SQLServerPrivEscRowThreated | Out-File '$OUT\mssql_priv.txt' -Encoding utf8"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   PowerUpSQL -> mssql_priv.txt" -ForegroundColor Green
-} catch {
-    Write-Host "[--]   PowerUpSQL failed: $_" -ForegroundColor DarkGray
-}
-
 Write-Host ""
 Write-Host "[OK] Done. Output folder: $OUT" -ForegroundColor Green
 Write-Host ""
