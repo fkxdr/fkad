@@ -121,57 +121,68 @@ Write-Host ""
 
 # fkmde
 try {
-    & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkmde/refs/heads/main/fkmde.ps1') } *>&1 | Out-File "$OUT\fkmde.txt" -Encoding utf8
-    Write-Host "[OK] fkmde -> fkmde.txt" -ForegroundColor Green
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkmde/refs/heads/main/fkmde.ps1') *>&1 | Out-File '$OUT\fkmde.txt' -Encoding utf8; Write-Host 'fkmde completed'`""
+    Write-Host "[OK] fkmde started in new window" -ForegroundColor Green
 } catch {
-    Write-Host "[--] fkmde failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--] fkmde failed: $_" -ForegroundColor Red
 }
 
 # PrivescCheck
 try {
-    IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1')
-    Invoke-PrivescCheck -Extended -Audit -Report "$OUT\PrivescCheck_$($env:COMPUTERNAME)" -Format TXT | Out-Null
-    Write-Host "[OK] PrivescCheck -> PrivescCheck_$($env:COMPUTERNAME).txt" -ForegroundColor Green
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck_$($env:COMPUTERNAME)' -Format TXT`""
+    Write-Host "[OK] PrivescCheck started in new window" -ForegroundColor Green
 } catch {
-    Write-Host "[--] PrivescCheck failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--] PrivescCheck failed: $_" -ForegroundColor Red
 }
 
+# WinPEAS
 try {
-    & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1') } *>&1 | Out-File "$OUT\winpeas.txt" -Encoding utf8
-    Write-Host "[OK] WinPEAS -> winpeas.txt" -ForegroundColor Green
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/carlospolop/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1'); Invoke-WinPEAS | Out-File '$OUT\winpeas.txt' -Encoding utf8`""
+    Write-Host "[OK] WinPEAS started in new window" -ForegroundColor Green
 } catch {
-    Write-Host "[--] WinPEAS failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--] WinPEAS failed: $_" -ForegroundColor Red
 }
 
+# HardeningKitty
 try {
-    IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.ps1')
-    Invoke-HardeningKitty -Mode Audit -Log -Report -ReportFile "$OUT\HardeningKitty.csv" | Out-Null
-    Write-Host "[OK] HardeningKitty -> HardeningKitty.csv" -ForegroundColor Green
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/ScipioAurelianus/HardeningKitty/main/HardeningKitty.ps1'); Invoke-HardeningKitty -Mode Audit -Log -Report -ReportFile '$OUT\HardeningKitty.csv'`""
+    Write-Host "[OK] HardeningKitty started in new window" -ForegroundColor Green
 } catch {
-    Write-Host "[--] HardeningKitty failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--] HardeningKitty failed: $_" -ForegroundColor Red
 }
 
+# ScriptSentry
 try {
-    & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/techspence/ScriptSentry/main/ScriptSentry.ps1') } *>&1 | Out-File "$OUT\scriptsentry.txt" -Encoding utf8
-    Write-Host "[OK] ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"IEX (Invoke-WebRequest 'https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1').Content; Invoke-ScriptSentry *>&1 | Out-File '$OUT\scriptsentry.txt' -Encoding utf8; Write-Host 'ScriptSentry completed'`""
+    Write-Host "[OK] ScriptSentry started in new window" -ForegroundColor Green
 } catch {
-    Write-Host "[--] ScriptSentry failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--] ScriptSentry failed: $_" -ForegroundColor Red
 }
 
+# Applocker
 try {
     IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1')
-    Invoke-AppLockerInspector -Verbose | Format-Table -Auto | Out-File "$OUT\applocker_inspector.txt" -Encoding utf8
-    Write-Host "[OK] AppLocker Inspector -> applocker_inspector.txt" -ForegroundColor Green
+    Invoke-AppLockerInspector -Verbose | Out-Null
+    $xmlFile = Get-ChildItem "C:\Users\$env:USERNAME\AppData\Local\Temp\AppLockerPolicy-*.xml" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($xmlFile) {
+        $xmlContent = Get-Content $xmlFile.FullName
+        if ($xmlContent -match '<Rule') {
+            Copy-Item $xmlFile.FullName "$OUT\AppLockerPolicy.xml"
+            Write-Host "[OK] AppLocker Policy -> AppLockerPolicy.xml" -ForegroundColor Green
+        } else {
+            Write-Host "[OK] No AppLocker policies configured" -ForegroundColor Green
+        }
+    }
 } catch {
-    Write-Host "[--] AppLocker Inspector failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--] AppLocker Inspector failed: $_" -ForegroundColor Red
 }
 
+# PowerUpSQL
 try {
-    IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
-    Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status -eq "Accessible"} | Get-SQLServerPrivEscRowThreated | Out-File "$OUT\mssql_priv.txt" -Encoding utf8
-    Write-Host "[OK] PowerUpSQL -> mssql_priv.txt" -ForegroundColor Green
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1'); Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded -Verbose | Out-File '$OUT\mssql_priv.txt' -Encoding utf8`""
+    Write-Host "[OK] PowerUpSQL started in new window" -ForegroundColor Green
 } catch {
-    Write-Host "[--] PowerUpSQL failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--] PowerUpSQL failed: $_" -ForegroundColor Red
 }
 
 Write-Host ""
