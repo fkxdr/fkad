@@ -123,6 +123,22 @@ try {
     Write-Host "Microsoft Defender for Endpoint Network Protection :          [??] Unknown" -ForegroundColor DarkYellow
 }
 
+# Memory Integrity
+try {
+    if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity") {
+        $hvciStatus = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity").Enabled
+        if ($hvciStatus -eq 1) {
+            Write-Host "[KO]   Memory Integrity is enabled" -ForegroundColor Green
+        } else {
+            Write-Host "[KO]   Memory Integrity is disabled" -ForegroundColor DarkRed
+        }
+    } else {
+        Write-Host "[--]   Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
+    }
+} catch {
+    Write-Host "M[--]   Memory Integrity is unknown" -ForegroundColor DarkYellow
+}
+
 # Tamper Protection
 $TamperProtectionStatus = $DefenderStatus.IsTamperProtected
 $TamperProtectionManage = $DefenderStatus.TamperProtectionSource
@@ -200,22 +216,6 @@ if ($bitlockerStatus -eq 1) {
     Write-Host "[??]   C: drive BitLocker encryption is unknown" -ForegroundColor DarkYellow
 }
 
-
-# Memory Integrity
-try {
-    if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity") {
-        $hvciStatus = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity").Enabled
-        if ($hvciStatus -eq 1) {
-            Write-Host "[KO]   Memory Integrity is enabled" -ForegroundColor Green
-        } else {
-            Write-Host "[KO]   Memory Integrity is disabled" -ForegroundColor DarkRed
-        }
-    } else {
-        Write-Host "[--]   Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
-    }
-} catch {
-    Write-Host "M[--]   Memory Integrity is unknown" -ForegroundColor DarkYellow
-}
 
 # WDAC
 try {
@@ -361,7 +361,7 @@ try {
 # HardeningKitty
 try {
     $hardKittyDir = "$env:TEMP\HardeningKitty"
-    $cmd = "New-Item -ItemType Directory -Path '$hardKittyDir\lists' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.psm1' -OutFile '$hardKittyDir\HardeningKitty.psm1'; `$lists = @('finding_list_0x6d69636b_machine.csv','finding_list_0x6d69636b_user.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_machine.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_user.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_machine.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_user.csv','finding_list_cis_microsoft_windows_server_2019_1809_3.0.0_machine.csv','finding_list_cis_microsoft_windows_server_2022_22h2_3.0.0_machine.csv'); foreach (`$list in `$lists) { Invoke-WebRequest -Uri `"https://raw.githubusercontent.com/scipag/HardeningKitty/master/lists/`$list`" -OutFile `"$hardKittyDir\lists\`$list`" -ErrorAction SilentlyContinue }; Import-Module '$hardKittyDir\HardeningKitty.psm1' -Force; Invoke-HardeningKitty -Mode Audit -Report -ReportFile '$OUT\HardeningKitty.csv' *>&1"
+    $cmd = "New-Item -ItemType Directory -Path '$hardKittyDir\lists' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.psm1' -OutFile '$hardKittyDir\HardeningKitty.psm1'; `$lists = @('finding_list_0x6d69636b_machine.csv','finding_list_0x6d69636b_user.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_machine.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_user.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_machine.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_user.csv','finding_list_cis_microsoft_windows_server_2019_1809_3.0.0_machine.csv','finding_list_cis_microsoft_windows_server_2022_22h2_3.0.0_machine.csv'); foreach (`$list in `$lists) { Invoke-WebRequest -Uri `"https://raw.githubusercontent.com/scipag/HardeningKitty/master/lists/`$list`" -OutFile `"$hardKittyDir\lists\`$list`" -ErrorAction SilentlyContinue }; Import-Module '$hardKittyDir\HardeningKitty.psm1' -Force; Invoke-HardeningKitty -Mode Audit -Report -ReportFile '$OUT\HardeningKitty.txt' *>&1"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
     Write-Host "[OK]   HardeningKitty -> HardeningKitty.txt" -ForegroundColor Green
 } catch {
@@ -370,28 +370,32 @@ try {
 
 # AppLocker Inspector
 try {
-    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1'); Invoke-AppLockerInspector -Verbose | Out-Null; `$xmlFile = Get-ChildItem `"C:\Users\`$env:USERNAME\AppData\Local\Temp\AppLockerPolicy-*.xml`" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if (`$xmlFile) { Copy-Item `$xmlFile.FullName '$OUT\AppLockerPolicy.xml' -Force }"
+    $appLockerDir = "$env:TEMP\AppLockerInspector"
+    $cmd = "New-Item -ItemType Directory -Path '$appLockerDir' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/techspence/AppLockerInspector/main/Invoke-AppLockerInspector.ps1' -OutFile '$appLockerDir\Invoke-AppLockerInspector.ps1'; & '$appLockerDir\Invoke-AppLockerInspector.ps1' -Verbose | Out-File '$OUT\AppLockerPolicy.txt' -Encoding utf8"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]    AppLocker Inspector -> AppLockerPolicy.xml" -ForegroundColor Green
+    Write-Host "[OK]   AppLocker Inspector -> AppLockerPolicy.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--]    AppLocker Inspector failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--]   AppLocker Inspector failed: $_" -ForegroundColor DarkGray
 }
 
 # WinPEAS
 try {
-    & { IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1') } *>&1 | Out-File "$OUT\winpeas.txt" -Encoding utf8
-    Write-Host "[OK] WinPEAS -> winpeas.txt" -ForegroundColor Green
+    $winpeasDir = "$env:TEMP\WinPEAS"
+    $cmd = "New-Item -ItemType Directory -Path '$winpeasDir' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1' -OutFile '$winpeasDir\winPEAS.ps1'; & '$winpeasDir\winPEAS.ps1' *>&1 | Out-File '$OUT\winpeas.txt' -Encoding utf8"
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+    Write-Host "[OK]   WinPEAS -> winpeas.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--] WinPEAS failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--]   WinPEAS failed: $_" -ForegroundColor DarkGray
 }
 
 # PowerUpSQL
 try {
-    IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
-    Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status -eq "Accessible"} | Get-SQLServerPrivEscRowThreated | Out-File "$OUT\mssql_priv.txt" -Encoding utf8
-    Write-Host "[OK] PowerUpSQL -> mssql_priv.txt" -ForegroundColor Green
+    $sqlDir = "$env:TEMP\PowerUpSQL"
+    $cmd = "New-Item -ItemType Directory -Path '$sqlDir' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1' -OutFile '$sqlDir\PowerUpSQL.ps1'; & '$sqlDir\PowerUpSQL.ps1'; Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {`$_.Status -eq 'Accessible'} | Get-SQLServerPrivEscRowThreated | Out-File '$OUT\mssql_priv.txt' -Encoding utf8"
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+    Write-Host "[OK]   PowerUpSQL -> mssql_priv.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--] PowerUpSQL failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--]   PowerUpSQL failed: $_" -ForegroundColor DarkGray
 }
 
 Write-Host ""
