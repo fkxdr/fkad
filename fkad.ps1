@@ -516,6 +516,56 @@ if ($msiOutput) {
 
 Write-Host ""
 
+# RDP connections
+try {
+    $rdp = reg query "HKCU\Software\Microsoft\Terminal Server Client\Default" 2>$null
+    if ($rdp -match "MRU") {
+        Write-Host "[KO]   RDP saved servers found -> rdp_servers.txt" -ForegroundColor DarkRed
+        $rdp | Out-File "$OUT\rdp_servers.txt"
+    } else {
+        Write-Host "[OK]   No saved RDP servers found" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[--]   RDP enumeration failed" -ForegroundColor DarkYellow
+}
+
+# PuTTY sessions
+try {
+    $putty = reg query "HKCU\Software\SimonTatham\PuTTY\Sessions" 2>$null
+    if ($putty -match "Sessions") {
+        Write-Host "[KO]   PuTTY sessions configured -> putty_sessions.txt" -ForegroundColor DarkRed
+        $putty | Out-File "$OUT\putty_sessions.txt"
+    } else {
+        Write-Host "[OK]   No PuTTY sessions found" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[??]   PuTTY enumeration skipped" -ForegroundColor DarkYellow
+}
+
+# SSH keys
+if (Test-Path "$env:USERPROFILE\.ssh") {
+    Write-Host "[KO]   SSH keys found -> ssh_keys.txt" -ForegroundColor DarkRed
+    Get-ChildItem "$env:USERPROFILE\.ssh" | Out-File "$OUT\ssh_keys.txt"
+} else {
+    Write-Host "[OK]   No SSH keys found" -ForegroundColor Green
+}
+
+# PowerShell history
+$histFile = "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt"
+if (Test-Path $histFile) {
+    Copy-Item $histFile "$OUT\powershell_history.txt" -ErrorAction SilentlyContinue
+    $sensitive = Select-String -Path $histFile -Pattern "password|passwd|pwd|pass=|api.?key|token|secret|credential|auth|login" -ErrorAction SilentlyContinue
+    if ($sensitive) {
+        Write-Host "[KO]   There might be sensitive commands in PowerShell history -> powershell_history.txt" -ForegroundColor DarkRed
+    } else {
+        Write-Host "[OK]   PowerShell history found -> powershell_history.txt" -ForegroundColor Green
+    }
+} else {
+    Write-Host "[OK]   No PowerShell history found" -ForegroundColor Green
+}
+
+Write-Host ""
+
 # PrivescCheck
 try {
     $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck' -Format HTML"
