@@ -587,9 +587,19 @@ try {
 # HardeningKitty
 try {
     $hardKittyDir = "$env:TEMP\HardeningKitty"
-    $cmd = "New-Item -ItemType Directory -Path '$hardKittyDir\lists' -Force | Out-Null; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.psm1' -OutFile '$hardKittyDir\HardeningKitty.psm1'; `$lists = @('finding_list_0x6d69636b_machine.csv','finding_list_0x6d69636b_user.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_machine.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_user.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_machine.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_user.csv','finding_list_cis_microsoft_windows_server_2019_1809_3.0.0_machine.csv','finding_list_cis_microsoft_windows_server_2022_22h2_3.0.0_machine.csv'); foreach (`$list in `$lists) { Invoke-WebRequest -Uri `"https://raw.githubusercontent.com/scipag/HardeningKitty/master/lists/`$list`" -OutFile `"$hardKittyDir\lists\`$list`" -ErrorAction SilentlyContinue }; Import-Module '$hardKittyDir\HardeningKitty.psm1' -Force; Invoke-HardeningKitty -Mode Audit -Report -ReportFile '$OUT\HardeningKitty.txt' *>&1"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   HardeningKitty -> HardeningKitty.txt" -ForegroundColor Green
+    New-Item -ItemType Directory -Path "$hardKittyDir\lists" -Force | Out-Null
+    Write-Host "[*]   Downloading HardeningKitty..." -ForegroundColor Gray
+    Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.psm1' -OutFile "$hardKittyDir\HardeningKitty.psm1" -ErrorAction Stop
+    $lists = @('finding_list_0x6d69636b_machine.csv','finding_list_0x6d69636b_user.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_machine.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_user.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_machine.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_user.csv','finding_list_cis_microsoft_windows_server_2019_1809_3.0.0_machine.csv','finding_list_cis_microsoft_windows_server_2022_22h2_3.0.0_machine.csv')
+    foreach ($list in $lists) {
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/scipag/HardeningKitty/master/lists/$list" -OutFile "$hardKittyDir\lists\$list" -ErrorAction SilentlyContinue
+    }
+    Push-Location $hardKittyDir
+    $output = powershell -ExecutionPolicy Bypass -Command "Import-Module '$hardKittyDir\HardeningKitty.psm1' -Force; Invoke-HardeningKitty -Mode Audit" 2>&1
+    Pop-Location
+    $filtered = $output | Where-Object { $_ -notmatch '^\[!\]' -and $_ -notmatch '^\[+\]' -and $_ -notmatch 'Severity=Low' -and $_ -notmatch 'Severity=Passed' }
+    $filtered | Out-File "$OUT\HardeningKitty.txt" -Encoding utf8
+    Write-Host "[OK]   HardeningKitty (Medium+ only) -> HardeningKitty.txt" -ForegroundColor Green
 } catch {
     Write-Host "[--]   HardeningKitty failed: $_" -ForegroundColor DarkYellow
 }
