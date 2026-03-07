@@ -34,7 +34,8 @@ For most assessments it makes sense to follow up enumeration on a provided devic
 powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
 ```
 
-<img width="1230" height="749" alt="image" src="https://github.com/user-attachments/assets/865604f5-ae63-4076-a83f-7cb0055ec48e" />
+<img width="1515" height="770" alt="image" src="https://github.com/user-attachments/assets/3f9f654a-5464-44ad-aab4-04b27d8e6354" />
+
 
 - [ ] Pingcastle
 - [ ] MSSQL
