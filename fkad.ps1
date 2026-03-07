@@ -39,6 +39,10 @@ function IsAdmin {
 
 Banner
 
+Write-Host "[*]   Device: $($env:COMPUTERNAME)" -ForegroundColor DarkGray
+Write-Host "[*]   User: $($env:USERNAME)" -ForegroundColor DarkGray
+Write-Host ""
+
 $isAdmin = IsAdmin
 if ($isAdmin) {
     Write-Host "[OK]   Running as administrator" -ForegroundColor Red
@@ -46,6 +50,7 @@ if ($isAdmin) {
     Write-Host "[OK]   Not running as administrator" -ForegroundColor Green
 }
 
+# Powershell downgrade
 try {
     $ps2 = Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -ErrorAction SilentlyContinue
     $net2 = Get-WindowsOptionalFeature -Online -FeatureName NetFx3 -ErrorAction SilentlyContinue
@@ -57,6 +62,20 @@ try {
     }
 } catch {
     Write-Host "       - PowerShell downgrade requires more privs" -ForegroundColor DarkGray
+}
+
+# Token Impersonation
+if ($isAdmin) {
+    try {
+        $processes = Get-Process | Where-Object { $_.SessionId -gt 0 }
+        if ($processes.Count -gt 1) {
+            Write-Host "       - Token impersonation might be possible: https://github.com/Shac0x/Invoke-Totem" -ForegroundColor DarkRed
+        }
+    } catch {
+        Write-Host "       - Token enumeration for impersonation failed" -ForegroundColor DarkYellow
+    }
+} else {
+    Write-Host "       - Token impersonation requires more privs" -ForegroundColor DarkGray
 }
 
 # Language Mode Check
@@ -101,26 +120,26 @@ try {
 try {
     $MDEservice = Get-Service -Name "Sense" -ErrorAction Stop
     if ($MDEservice.Status -eq "Running") {
-        Write-Host "Microsoft Defender for Endpoint Sensor :                      [OK] Enabled" -ForegroundColor Green
+        Write-Host "       - Microsoft Defender for Endpoint Sensor is enabled" -ForegroundColor Green
     } else {
-        Write-Host "Microsoft Defender for Endpoint Sensor :                      [KO] Disabled" -ForegroundColor DarkRed
+        Write-Host "       - Microsoft Defender for Endpoint Sensor is disabled" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "Microsoft Defender for Endpoint Sensor :                      [KO] Disabled" -ForegroundColor DarkRed
+    Write-Host "       - Microsoft Defender for Endpoint Sensor is disabled" -ForegroundColor DarkRed
 }
 
 # Network Protection
 try {
     $NetworkProtectionValue = (Get-MpPreference).EnableNetworkProtection
     if ($NetworkProtectionValue -eq 1) {
-        Write-Host "Microsoft Defender for Endpoint Network Protection :          [OK] Enabled" -ForegroundColor Green
+        Write-Host "       - Microsoft Defender for Endpoint Network Protection is enabled" -ForegroundColor Green
     } elseif ($NetworkProtectionValue -eq 0) {
-        Write-Host "Microsoft Defender for Endpoint Network Protection :          [KO] Disabled" -ForegroundColor DarkRed
+        Write-Host "       - Microsoft Defender for Endpoint Network Protection is disabled" -ForegroundColor DarkRed
     } elseif ($NetworkProtectionValue -eq 2) {
-        Write-Host "Microsoft Defender for Endpoint Network Protection :          [OK] Audit" -ForegroundColor Green
+        Write-Host "       - Microsoft Defender for Endpoint Network Protection is in audit mode" -ForegroundColor DarkYellow
     }
 } catch {
-    Write-Host "Microsoft Defender for Endpoint Network Protection :          [??] Unknown" -ForegroundColor DarkYellow
+    Write-Host "       - Microsoft Defender for Endpoint Network Protection can not be queried" -ForegroundColor DarkYellow
 }
 
 # Memory Integrity
@@ -128,15 +147,15 @@ try {
     if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity") {
         $hvciStatus = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity").Enabled
         if ($hvciStatus -eq 1) {
-            Write-Host "[KO]   Memory Integrity is enabled" -ForegroundColor Green
+            Write-Host "       - Memory Integrity is enabled" -ForegroundColor Green
         } else {
-            Write-Host "[KO]   Memory Integrity is disabled" -ForegroundColor DarkRed
+            Write-Host "       - Memory Integrity is disabled" -ForegroundColor DarkRed
         }
     } else {
-        Write-Host "[--]   Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
+        Write-Host "       - Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
     }
 } catch {
-    Write-Host "M[--]   Memory Integrity is unknown" -ForegroundColor DarkYellow
+    Write-Host "       - Memory Integrity is unknown" -ForegroundColor DarkYellow
 }
 
 # Tamper Protection
@@ -144,37 +163,18 @@ $TamperProtectionStatus = $DefenderStatus.IsTamperProtected
 $TamperProtectionManage = $DefenderStatus.TamperProtectionSource
 
 if ($TamperProtectionStatus -eq $true) {
-    Write-Host "Tamper Protection Status :                                    [OK] Enabled" -ForegroundColor Green
+    Write-Host "       - Tamper Protection is enabled" -ForegroundColor Green
 } else {
-    Write-Host "Tamper Protection Status :                                    [KO] Disabled" -ForegroundColor DarkRed
+    Write-Host "       - Tamper Protection is disabled" -ForegroundColor DarkRed
 }
 
 # Behavior Monitoring
 if (-not $DefenderPreferences.DisableBehaviorMonitoring) {
-    Write-Host "Behavior Monitoring :                                         [OK] Enabled" -ForegroundColor Green
+    Write-Host "       - Behavior Monitoring is enabled" -ForegroundColor Green
 } else {
-    Write-Host "Behavior Monitoring :                                         [KO] Disabled" -ForegroundColor DarkRed
+    Write-Host "       - Behavior Monitoring is disabled" -ForegroundColor DarkRed
 }
 
-# Edge SmartScreen
-$edgeSSvalue = $null
-$policyPaths = @(
-    "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
-    "HKCU:\SOFTWARE\Policies\Microsoft\Edge"
-)
-foreach ($path in $policyPaths) {
-    if (Test-Path $path) {
-        try {
-            $edgeSSvalue = Get-ItemPropertyValue -Path $path -Name "SmartScreenEnabled" -ErrorAction Stop
-            break
-        } catch {}
-    }
-}
-if ($edgeSSvalue -eq 0) {
-    Write-Host "Microsoft Edge SmartScreen :                                  [KO] Disabled" -ForegroundColor DarkRed
-} else {
-    Write-Host "Microsoft Edge SmartScreen :                                  [OK] Enabled" -ForegroundColor Green
-}
 
 # Exclusions
 if ($isAdmin) {
@@ -223,37 +223,43 @@ try {
     $codeIntegrityStatus = $cipolicies.CodeIntegrityPolicyEnforcementStatus
     $userModeStatus = $cipolicies.UsermodeCodeIntegrityPolicyEnforcementStatus
 
-    $ciLabel = switch ($codeIntegrityStatus) { 0 { "[KO] Off" } 1 { "[??] Audit Mode" } 2 { "[OK] Enforced" } Default { "[??] Unknown" } }
-    $ciColor = switch ($codeIntegrityStatus) { 2 { "Green" } 1 { "DarkYellow" } Default { "DarkRed" } }
-    Write-Host "WDAC Kernel Mode (CI) :                                       $ciLabel" -ForegroundColor $ciColor
-
-    $umciLabel = switch ($userModeStatus) { 0 { "[KO] Off" } 1 { "[??] Audit Mode" } 2 { "[OK] Enforced" } Default { "[??] Unknown" } }
-    $umciColor = switch ($userModeStatus) { 2 { "Green" } 1 { "DarkYellow" } Default { "DarkRed" } }
-    Write-Host "WDAC User Mode (UMCI) :                                       $umciLabel" -ForegroundColor $umciColor
-
     $policyDir = "$env:windir\System32\CodeIntegrity\CiPolicies\Active"
+    $policyCount = 0
     if (Test-Path $policyDir) {
         $activePolicies = Get-ChildItem -Path $policyDir -Filter "*.cip" -ErrorAction SilentlyContinue
-        if ($activePolicies.Count -gt 0) {
-            Write-Host "WDAC Active Policies :                                        [OK] $($activePolicies.Count) policy file(s) deployed" -ForegroundColor Green
-        } else {
-            Write-Host "WDAC Active Policies :                                        [KO] No .cip policy files found" -ForegroundColor DarkRed
-        }
+        $policyCount = $activePolicies.Count
     }
+
+    if ($policyCount -gt 0) {
+        Write-Host "[OK]   WDAC Active Policies: $policyCount policies deployed" -ForegroundColor Green
+    } else {
+        Write-Host "[KO]   WDAC Active Policies: No policies deployed" -ForegroundColor DarkRed
+    }
+
+    $ciLabel = switch ($codeIntegrityStatus) { 0 { "Off" } 1 { "Audit Mode" } 2 { "Enforced" } Default { "Unknown" } }
+    $ciColor = switch ($codeIntegrityStatus) { 2 { "Green" } 1 { "DarkYellow" } Default { "DarkRed" } }
+    $ciStatus = switch ($codeIntegrityStatus) { 2 { "[OK]" } 1 { "[??]" } Default { "[KO]" } }
+    Write-Host "       - Kernel Mode Code Integrity: $ciLabel" -ForegroundColor $ciColor
+
+    $umciLabel = switch ($userModeStatus) { 0 { "Off" } 1 { "Audit Mode" } 2 { "Enforced" } Default { "Unknown" } }
+    $umciColor = switch ($userModeStatus) { 2 { "Green" } 1 { "DarkYellow" } Default { "DarkRed" } }
+    $umciStatus = switch ($userModeStatus) { 2 { "[OK]" } 1 { "[??]" } Default { "[KO]" } }
+    Write-Host "       - User Mode Code Integrity: $umciLabel" -ForegroundColor $umciColor
+
 } catch {
-    Write-Host "WDAC Policy :                                                 [??] Unable to query" -ForegroundColor DarkYellow
+    Write-Host "[??]   WDAC: Unable to query" -ForegroundColor DarkYellow
 }
 
 # AppLocker
 try {
     $applockerService = Get-Service -Name "AppIDSvc" -ErrorAction Stop
     if ($applockerService.Status -eq "Running") {
-        Write-Host "[OK] AppLocker Service (AppIDSvc) is running" -ForegroundColor Green
+        Write-Host "[OK]   AppLocker Service (AppIDSvc) is running" -ForegroundColor Green
     } else {
-        Write-Host "[KO] AppLocker Service (AppIDSvc) is not running" -ForegroundColor DarkRed
+        Write-Host "[KO]   AppLocker Service (AppIDSvc) is not running" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "[KO] AppLocker Service (AppIDSvc) was not found" -ForegroundColor DarkRed
+    Write-Host "[KO]   AppLocker Service (AppIDSvc) was not found" -ForegroundColor DarkRed
 }
 
 $applockerRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2"
@@ -270,26 +276,43 @@ foreach ($collection in $applockerCollections) {
     }
 }
 if (-not $applockerConfigured) {
-    Write-Host "       [KO] No rules are configured" -ForegroundColor DarkRed
+    Write-Host "       - There are no baselines or rules configured" -ForegroundColor DarkRed
 }
-Write-Host ""
 
-# Check WSL
+# Edge SmartScreen
+$edgeSSvalue = $null
+$policyPaths = @(
+    "HKLM:\SOFTWARE\Policies\Microsoft\Edge",
+    "HKCU:\SOFTWARE\Policies\Microsoft\Edge"
+)
+foreach ($path in $policyPaths) {
+    if (Test-Path $path) {
+        try {
+            $edgeSSvalue = Get-ItemPropertyValue -Path $path -Name "SmartScreenEnabled" -ErrorAction Stop
+            break
+        } catch {}
+    }
+}
+if ($edgeSSvalue -eq 0) {
+    Write-Host "[KO]   Microsoft Edge SmartScreen is disabled" -ForegroundColor DarkRed
+} else {
+    Write-Host "[OK]   Microsoft Edge SmartScreen is enabled" -ForegroundColor Green
+}
+
+# SCCM/SCOM Enumeration
 try {
-    $wsl = wsl --list --verbose 2>&1
-    if ($wsl -match "NAME") {
-        Write-Host "[KO] WSL is installed and has distributions" -ForegroundColor DarkRed
-        foreach ($line in $wsl) {
-            if ($line -match "\S") {
-                Write-Host "       $line" -ForegroundColor DarkGray
-            }
-        }
-    } else {
-        Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
+    $smContainer = Get-ADObject -Filter {Name -eq "System Management"} -SearchBase $([ADSI]"LDAP://RootDSE").defaultNamingContext -ErrorAction Stop
+    
+    if ($smContainer) {
+        Write-Host "[KO]   System Center infrastructure detected (SCCM/SCOM)" -ForegroundColor DarkRed
+        Write-Host "       - SCCM: Use SharpSCCM - https://github.com/Mayyhem/SharpSCCM" -ForegroundColor DarkGray
+        Write-Host "       - SCOM: Use SharpSCOM - https://github.com/breakfix/SharpSCOM" -ForegroundColor DarkGray
     }
 } catch {
-    Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
+    Write-Host "[OK]   No System Center (SCCM/SCOM) infrastructure detected" -ForegroundColor Green
 }
+
+Write-Host ""
 
 Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
 
@@ -308,6 +331,36 @@ Write-Host "[OK]   Users & Admins -> users_and_admins.txt" -ForegroundColor Gree
 
 Run "Scheduled Tasks" { Get-ScheduledTask | Format-Table -AutoSize } "scheduled_tasks.txt"
 
+# Check WSL
+try {
+    $wsl = wsl --list --verbose 2>&1
+    if ($wsl -match "NAME") {
+        Write-Host "[KO] WSL is installed and has distributions" -ForegroundColor DarkRed
+        foreach ($line in $wsl) {
+            if ($line -match "\S") {
+                Write-Host "       $line" -ForegroundColor DarkGray
+            }
+        }
+    } else {
+        Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
+}
+
+# DPAPI Artefacts Check
+try {
+    $dpapi = Get-ChildItem -Path "$env:APPDATA\Microsoft\Credentials" -ErrorAction SilentlyContinue
+    if ($dpapi -and $dpapi.Count -gt 0) {
+        Write-Host "[??]   DPAPI encrypted credentials found ($($dpapi.Count))" -ForegroundColor DarkYellow
+        Write-Host "       - Use SharpDPAPI or Mimikatz for decryption" -ForegroundColor DarkGray
+    } else {
+        Write-Host "[OK]   No DPAPI credentials found" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[OK]   DPAPI check skipped" -ForegroundColor Green
+}
+
 # Startup items
 $startupOutput = Get-CimInstance Win32_StartupCommand |
     Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" } |
@@ -317,7 +370,7 @@ if ($startupOutput) {
     $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
     Write-Host "[KO]   Startup items found -> startup_items.txt" -ForegroundColor Red
 } else {
-    Write-Host "[OK]   No interesting startup items found" -ForegroundColor Green
+    Write-Host "[OK]   No non-standard startup items found" -ForegroundColor Green
 }
 
 # MSI repairing
@@ -342,9 +395,10 @@ Write-Host ""
 
 # PrivescCheck
 try {
-    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck_$($env:COMPUTERNAME)' -Format TXT *>&1"
+    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Severity High, Medium -Report '$OUT\PrivescCheck' -Format TXT *>&1"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   PrivescCheck -> PrivescCheck_$($env:COMPUTERNAME).txt" -ForegroundColor Green
+    Write-Host "[OK]   PrivescCheck -> PrivescCheck.txt" -ForegroundColor Green
+    Write-Host "       - Additional checks can be done with WinPEAS, but Defender must be bypassed" -ForegroundColor DarkGray
 } catch {
     Write-Host "[--]   PrivescCheck failed: $_" -ForegroundColor DarkGray
 }
