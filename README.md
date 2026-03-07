@@ -22,7 +22,6 @@ Example:
 
 ```bash
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d 10.10.2.13
-./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com -fast
 ```
 
@@ -34,7 +33,8 @@ For most assessments it makes sense to follow up enumeration on a provided devic
 ```ps
 powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
 ```
-<img width="1239" height="728" alt="image" src="https://github.com/user-attachments/assets/7f62cd13-e9ea-4f95-a0fa-01e70296caf6" />
+
+<img width="1230" height="749" alt="image" src="https://github.com/user-attachments/assets/865604f5-ae63-4076-a83f-7cb0055ec48e" />
 
 - [ ] Pingcastle
 - [ ] MSSQL
