@@ -626,6 +626,5 @@ try {
 
 Write-Host ""
 Write-Host "[OK] Done. Output folder: $OUT" -ForegroundColor Green
+Stop-Transcript | Out-Null
 Write-Host ""
-
-Stop-Transcript
