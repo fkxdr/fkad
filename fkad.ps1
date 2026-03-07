@@ -509,7 +509,7 @@ $msiOutput = Get-WmiObject -Class Win32_Product |
 
 if ($msiOutput) {
     $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
-    Write-Host "[KO]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkGray
+    Write-Host "[KO]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
 } else {
     Write-Host "[OK]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
@@ -518,12 +518,11 @@ Write-Host ""
 
 # PrivescCheck
 try {
-    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Severity High, Medium -Report '$OUT\PrivescCheck' -Format TXT *>&1"
+    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck' -Format HTML"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   PrivescCheck -> PrivescCheck.txt" -ForegroundColor Green
-    Write-Host "       - Additional checks can be done with WinPEAS, but Defender must be bypassed" -ForegroundColor DarkGray
+    Write-Host "[OK]   PrivescCheck -> PrivescCheck.html" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   PrivescCheck failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
 }
 
 # ScriptSentry
@@ -532,7 +531,7 @@ try {
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
     Write-Host "[OK]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   ScriptSentry failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
 }
 
 # HardeningKitty
@@ -542,7 +541,28 @@ try {
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
     Write-Host "[OK]   HardeningKitty -> HardeningKitty.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   HardeningKitty failed: $_" -ForegroundColor DarkGray
+    Write-Host "[--]   HardeningKitty failed: $_" -ForegroundColor DarkYellow
+}
+
+# PingCastle
+try {
+    $pingCastleUrl = "https://github.com/netwrix/pingcastle/releases/download/3.4.2.66/PingCastle_3.4.2.66.zip"
+    $pingCastlePath = "$env:TEMP\PingCastle_3.4.2.66.zip"
+    $pingCastleDir = "$env:TEMP\PingCastle"
+    Invoke-WebRequest -Uri $pingCastleUrl -OutFile $pingCastlePath -UseBasicParsing
+    Expand-Archive -Path $pingCastlePath -DestinationPath $pingCastleDir -Force
+    Push-Location $pingCastleDir
+    & ".\PingCastle.exe" --healthcheck --datefile 2>&1
+    Pop-Location
+
+    if ($output -match "not connected to a domain") {
+        Write-Host "[--]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
+    } else {
+        Move-Item -Path "$pingCastleDir\*.html" -Destination "$OUT\PingCastle.html" -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix (October 25)" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[--]   PingCastle failed: $_" -ForegroundColor DarkYellow
 }
 
 Write-Host ""
