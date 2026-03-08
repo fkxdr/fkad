@@ -493,6 +493,24 @@ else
   echo -e "${GREY}[--] PetitPotam check failed${NC}"
 fi
 
+# Coerce (multi-method via coerce_plus)
+COERCE_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M coerce_plus 2>/dev/null)
+if echo "$COERCE_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
+  echo -e "${RED}[KO] Coerce methods available → coerce.txt${NC}"
+  echo "$COERCE_OUTPUT" > "$OUTPUT_DIR/coerce.txt"
+else
+  echo -e "${GREEN}[OK] No coerce methods available${NC}"
+fi
+
+# Zerologon (CVE-2020-1472)
+ZERO_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M zerologon 2>/dev/null)
+if echo "$ZERO_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
+  echo -e "${RED}[KO] Zerologon (CVE-2020-1472) vulnerable${NC}"
+  echo -e "${GREY}       └─ cve-2020-1472-exploit.py $DC_HOSTNAME $DC_IP${NC}"
+else
+  echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable${NC}"
+fi
+
 # WPAD
 WPAD_DNS=$(nslookup wpad.$DOMAIN $DC_IP 2>&1)
 if echo "$WPAD_DNS" | grep -q "can't find"; then
@@ -625,6 +643,17 @@ cd "$OUTPUT_DIR"
 zip -q bloodhound.zip *.json
 cd "$CURRENT_PATH"
 
+# SCCM/MECM Detection
+SCCM_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M sccm 2>/dev/null)
+if echo "$SCCM_OUTPUT" | grep -qi "sccm\|mecm\|\[+\]"; then
+  echo -e "${RED}[KO] SCCM/MECM infrastructure detected → sccm.txt${NC}"
+  echo "$SCCM_OUTPUT" > "$OUTPUT_DIR/sccm.txt"
+  echo -e "${GREY}       └─ SharpSCCM.exe local secrets -m disk${NC}"
+  echo -e "${GREY}          SharpSCCM.exe get collections${NC}"
+else
+  echo -e "${GREEN}[OK] No SCCM/MECM infrastructure detected${NC}"
+fi
+
 echo ""
 
 # MachineAccountQuota Check
@@ -640,6 +669,15 @@ if [ ! -z "$MAQ" ]; then
   fi
 else
   echo -e "${GREY}[--] Could not determine MachineAccountQuota${NC}"
+fi
+
+# Pre-Windows 2000 Computer Accounts
+PRE2K_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M pre2k 2>/dev/null)
+if echo "$PRE2K_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
+  echo -e "${RED}[KO] Pre-Windows 2000 computer accounts found → pre2k.txt${NC}"
+  echo "$PRE2K_OUTPUT" > "$OUTPUT_DIR/pre2k.txt"
+else
+  echo -e "${GREEN}[OK] No Pre-Windows 2000 computer accounts found${NC}"
 fi
 
 # LAPS Check
@@ -846,6 +884,15 @@ if [ "$DES_COUNT" -gt 0 ]; then
   done
 else
   echo -e "${GREEN}[OK] No users with DES-only Kerberos encryption${NC}"
+fi
+
+# GPP Passwords (SYSVOL)
+GPP_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" --share=SYSVOL -M gpp_password 2>/dev/null)
+if echo "$GPP_OUTPUT" | grep -qi "password\|\[+\]"; then
+  echo -e "${RED}[KO] GPP credentials found → gpp_passwords.txt${NC}"
+  echo "$GPP_OUTPUT" | grep -i "password\|\[+\]" > "$OUTPUT_DIR/gpp_passwords.txt"
+else
+  echo -e "${GREEN}[OK] No GPP passwords found${NC}"
 fi
 
 echo ""
