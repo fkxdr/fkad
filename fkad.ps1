@@ -460,8 +460,6 @@ if ($instances) {
 
 Write-Host ""
 
-Run "DNS Cache" { ipconfig /displaydns } "dns_cache.txt"
-
 # Admins and logged on users
 $adminOutput = net localgroup administrators
 $loggedOutput = query user 2>$null
@@ -473,7 +471,23 @@ $combined += $loggedOutput
 $combined | Out-File "$OUT\users_and_admins.txt" -Encoding utf8
 Write-Host "[OK]   Users & Admins -> users_and_admins.txt" -ForegroundColor Green
 
+# DNS Cache
+Run "DNS Cache" { ipconfig /displaydns } "dns_cache.txt"
+
+# Scheduled Tasks
 Run "Scheduled Tasks" { Get-ScheduledTask | Format-Table -AutoSize } "scheduled_tasks.txt"
+
+# Startup items
+$startupOutput = Get-CimInstance Win32_StartupCommand |
+    Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" } |
+    Format-Table -AutoSize
+
+if ($startupOutput) {
+    $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
+    Write-Host "[KO]   Startup items found -> startup_items.txt" -ForegroundColor Red
+} else {
+    Write-Host "[OK]   No non-standard startup items found" -ForegroundColor Green
+}
 
 # Check WSL
 try {
@@ -494,18 +508,6 @@ try {
     Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
 }
 
-# Startup items
-$startupOutput = Get-CimInstance Win32_StartupCommand |
-    Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" } |
-    Format-Table -AutoSize
-
-if ($startupOutput) {
-    $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
-    Write-Host "[KO]   Startup items found -> startup_items.txt" -ForegroundColor Red
-} else {
-    Write-Host "[OK]   No non-standard startup items found" -ForegroundColor Green
-}
-
 # MSI repairing
 $msiOutput = Get-WmiObject -Class Win32_Product |
     Where-Object { $_.Vendor -notin @("Microsoft Corporation","Microsoft","Python Software Foundation","Parallels International GmbH") } |
@@ -516,7 +518,6 @@ $msiOutput = Get-WmiObject -Class Win32_Product |
             Version = $_.Version
         }
     }
-
 if ($msiOutput) {
     $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
     Write-Host "[KO]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
