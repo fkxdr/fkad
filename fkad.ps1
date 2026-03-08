@@ -277,6 +277,29 @@ if (IsAdmin) {
 }
 
 Write-Host ""
+$privMap = @{
+    "SeDebugPrivilege"           = "Read LSASS / inject into any process"
+    "SeImpersonatePrivilege"     = "Token impersonation -> PrintSpoofer/JuicyPotato"
+    "SeAssignPrimaryPrivilege"   = "Assign primary token -> privilege escalation"
+    "SeTcbPrivilege"             = "Act as OS -> create tokens"
+    "SeBackupPrivilege"          = "Read any file ignoring ACLs -> NTDS.dit"
+    "SeRestorePrivilege"         = "Write any file ignoring ACLs"
+    "SeCreateTokenPrivilege"     = "Create arbitrary tokens"
+    "SeLoadDriverPrivilege"      = "Load malicious kernel driver"
+    "SeTakeOwnershipPrivilege"   = "Take ownership of any object"
+    "SeRelabelPrivilege"         = "Modify integrity levels"
+}
+
+Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
+
+$whoamiOut = whoami /priv
+foreach ($priv in $privMap.Keys) {
+    if ($whoamiOut -match $priv) {
+        Write-Host "       - $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
+    }
+}
+
+Write-Host ""
 
 # BitLocker
 $bitlockerStatus = (New-Object -ComObject Shell.Application).NameSpace('C:').Self.ExtendedProperty('System.Volume.BitLockerProtection')
@@ -436,8 +459,6 @@ if ($instances) {
 }
 
 Write-Host ""
-
-Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
 
 Run "DNS Cache" { ipconfig /displaydns } "dns_cache.txt"
 
