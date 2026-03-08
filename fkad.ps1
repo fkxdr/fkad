@@ -540,7 +540,7 @@ try {
         }
     }
 } catch {
-    Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkOrange
+    Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
 }
 
 # RDP connections
@@ -588,6 +588,49 @@ if (Test-Path "$env:USERPROFILE\.ssh") {
     Get-ChildItem "$env:USERPROFILE\.ssh" | Out-File "$OUT\ssh_keys.txt"
 } else {
     Write-Host "[OK]   No SSH keys found" -ForegroundColor Green
+}
+
+# Browser creds check, edge bigger than 0
+$browserPaths = @{
+    "Chrome"  = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data"
+    "Edge"    = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Login Data"
+    "Brave"   = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\Login Data"
+    "Firefox" = "$env:APPDATA\Mozilla\Firefox\Profiles"
+}
+$found = @()
+foreach ($browser in $browserPaths.Keys) {
+    $path = $browserPaths[$browser]
+    if ($browser -eq "Firefox") {
+        if (Test-Path $path) {
+            $profiles = Get-ChildItem $path -Directory -ErrorAction SilentlyContinue
+            foreach ($profile in $profiles) {
+                $loginFile = "$($profile.FullName)\logins.json"
+                if (Test-Path $loginFile) {
+                    $found += $browser
+                    Copy-Item $loginFile "$OUT\firefox_logins_$($profile.Name).json" -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    } else {
+        if (Test-Path $path) {
+            try {
+                $tmpCopy = "$env:TEMP\${browser}_tmp_ld"
+                Copy-Item $path $tmpCopy -ErrorAction Stop
+                $count = ([regex]::Matches([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($tmpCopy)), "https?://")).Count
+                Remove-Item $tmpCopy -ErrorAction SilentlyContinue
+                if ($count -gt 0) {
+                    $found += $browser
+                    Copy-Item $path "$OUT\${browser}_LoginData" -ErrorAction SilentlyContinue
+                }
+            } catch {}
+        }
+    }
+}
+if ($found.Count -gt 0) {
+    Write-Host "[KO]   Browser credential stores found: $($found -join ', ') -> db copied to output" -ForegroundColor DarkRed
+    Write-Host "       - Decrypt with HackBrowserData: https://github.com/moonD4rk/HackBrowserData" -ForegroundColor DarkGray
+} else {
+    Write-Host "[OK]   No browser credential stores found" -ForegroundColor Green
 }
 
 # PowerShell history
