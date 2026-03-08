@@ -13,9 +13,6 @@ chmod +x fkad.sh
 ./fkad.sh -u <user> -p '<password>' -d <dc-ip/domain.com>
 ```
 
-> [!NOTE]
-> The -fast flag limits extensive checks in AD environments with a lot of dead objects.
-
 <img width="2208" height="1166" alt="screen" src="https://github.com/user-attachments/assets/c5742863-ab7e-400a-a386-f3556759f57c" />
 
 Example:
@@ -24,6 +21,10 @@ Example:
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d 10.10.2.13
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com -fast
 ```
+
+> [!NOTE]
+> The -fast flag limits extensive bloodhound checks in AD environments with a lot of dead objects.
+
 
 ## Follow-Up Enumeration
 
