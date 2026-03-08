@@ -472,16 +472,57 @@ $combined | Out-File "$OUT\users_and_admins.txt" -Encoding utf8
 Write-Host "[OK]   Users & Admins -> users_and_admins.txt" -ForegroundColor Green
 
 # DNS Cache
-Run "DNS Cache" { ipconfig /displaydns } "dns_cache.txt"
+$noisePatterns = 'microsoft\.com|windows\.com|akamai\.|trafficmanager\.net|msn\.com|office\.com|office365\.com|skype\.com|live\.com|bing\.com|msftncsi\.com|msftconnecttest\.com|windowsupdate\.com|github\.com|githubusercontent\.com|akadns\.net|edgesuite\.net|edgekey\.net|akamaiedge\.net|fastly\.net|globalcdn\.co|gcdn\.co|xboxservices\.com|azure\.com|azureedge\.net|smartscreen\.microsoft|digicert\.com|msedge\.net|msidentity\.com|dsp\.mp\.microsoft|delivery\.mp\.microsoft|qwilted-cds\.cqloud\.com'
+$dnsRaw = (ipconfig /displaydns) -join "`n"
+$blocks = $dnsRaw -split "(?=\n\S[^\n]+\n\s+-{5,})"
+$interesting = @()
+foreach ($block in $blocks) {
+    $firstLine = ($block -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -First 1).Trim()
+    if ($firstLine -and $firstLine -notmatch $noisePatterns -and $firstLine -notmatch '^Windows IP|^Record|^No records|^-{3,}|^Section|^Time To|^Data Length|^CNAME|^AAAA|^A \(Host\)|^PTR') {
+        $interesting += $block
+    }
+}
+if ($interesting.Count -gt 0) {
+    $interesting | Out-File "$OUT\dns_cache.txt" -Encoding utf8
+    Write-Host "[KO]   ($($interesting.Count)) unknown DNS cache entries -> dns_cache.txt" -ForegroundColor DarkRed
+} else {
+    Write-Host "[OK]   DNS cache contains only known domains" -ForegroundColor Green
+}
 
-# Scheduled Tasks
-Run "Scheduled Tasks" { Get-ScheduledTask | Format-Table -AutoSize } "scheduled_tasks.txt"
+# Scheduled Tasks (filtered)
+$allTasks = Get-ScheduledTask
+$suspicious = @()
+foreach ($task in $allTasks) {
+    $path = $task.TaskPath
+    $name = $task.TaskName
+    $actions = $task.Actions | ForEach-Object { $_.Execute + " " + $_.Arguments }
+    $actionStr = $actions -join " "
+
+    $isThirdParty = $path -notmatch '^\\Microsoft\\'
+    $isSuspiciousAction = $actionStr -match 'encoded|enc |bypass|hidden|\.vbs|\.js|\.bat|\.cmd|\.ps1|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin' `
+        -or ($actionStr -match '%Temp%|%AppData%|%Roaming%|\\Temp\\|\\AppData\\|\\Roaming\\' `
+        -and $actionStr -notmatch 'System32|SysWOW64|SystemRoot|ProgramFiles|\\Windows\\')
+
+    if ($isThirdParty -or $isSuspiciousAction) {
+        $suspicious += [PSCustomObject]@{
+            Path    = $path
+            Name    = $name
+            Action  = $actionStr.Trim()
+            State   = $task.State
+        }
+    }
+}
+if ($suspicious.Count -gt 0) {
+    $suspicious | Format-Table -AutoSize | Out-File "$OUT\scheduled_tasks.txt" -Encoding utf8
+    Write-Host "[KO]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
+} else {
+    Write-Host "[OK]   No suspicious scheduled tasks found" -ForegroundColor Green
+}
 
 # Startup items
 $startupOutput = Get-CimInstance Win32_StartupCommand |
     Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" } |
     Format-Table -AutoSize
-
 if ($startupOutput) {
     $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
     Write-Host "[KO]   Startup items found -> startup_items.txt" -ForegroundColor Red
