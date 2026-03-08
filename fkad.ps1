@@ -456,9 +456,11 @@ Run "Scheduled Tasks" { Get-ScheduledTask | Format-Table -AutoSize } "scheduled_
 
 # Check WSL
 try {
-    $wsl = wsl --list --verbose 2>&1
+    $wslJob = Start-Job { wsl --list --verbose 2>&1 }
+    $wsl = $wslJob | Wait-Job -Timeout 5 | Receive-Job
+    Remove-Job $wslJob -Force
     if ($wsl -match "NAME") {
-        Write-Host "[KO] WSL is installed and has distributions" -ForegroundColor DarkRed
+        Write-Host "[KO]   WSL is installed and has distributions" -ForegroundColor DarkRed
         foreach ($line in $wsl) {
             if ($line -match "\S") {
                 Write-Host "       $line" -ForegroundColor DarkGray
@@ -469,19 +471,6 @@ try {
     }
 } catch {
     Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
-}
-
-# DPAPI Artefacts Check
-try {
-    $dpapi = Get-ChildItem -Path "$env:APPDATA\Microsoft\Credentials" -ErrorAction SilentlyContinue
-    if ($dpapi -and $dpapi.Count -gt 0) {
-        Write-Host "[??]   DPAPI encrypted credentials found ($($dpapi.Count))" -ForegroundColor DarkYellow
-        Write-Host "       - Use SharpDPAPI or Mimikatz for decryption" -ForegroundColor DarkGray
-    } else {
-        Write-Host "[OK]   No DPAPI credentials found" -ForegroundColor Green
-    }
-} catch {
-    Write-Host "[OK]   DPAPI check skipped" -ForegroundColor Green
 }
 
 # Startup items
@@ -516,6 +505,44 @@ if ($msiOutput) {
 
 Write-Host ""
 
+# Tombstone deleted AD objects
+try {
+    if (Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue) {
+        $Deleted = Get-ADObject -Filter {isDeleted -eq $true} -IncludeDeletedObjects `
+            -Properties Name, ObjectClass, whenChanged, LastKnownParent `
+            | Where-Object { $_.ObjectClass -in @("user","computer","group") }
+        if ($Deleted) {
+            $Count = ($Deleted | Measure-Object).Count
+            $Deleted | Select-Object Name, ObjectClass, whenChanged, LastKnownParent | Out-File "$OUT\tombstone.txt" -Encoding utf8
+            Write-Host "[KO]   $Count deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
+            $Interesting = $Deleted | Where-Object { $_.Name -match "svc|admin|backup|sql|service|mgmt" }
+            if ($Interesting) {
+                $Interesting | ForEach-Object { Write-Host "       - $($_.Name) [$($_.ObjectClass)]" -ForegroundColor DarkGray }
+            }
+        } else {
+            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
+        }
+    } else {
+        $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+        $DN = "DC=" + ($Domain.Name -replace "\.", ",DC=")
+        $Searcher = New-Object System.DirectoryServices.DirectorySearcher
+        $Searcher.SearchRoot = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=Deleted Objects,$DN")
+        $Searcher.Filter = "(isDeleted=TRUE)"
+        $Searcher.SearchScope = "OneLevel"
+        $Searcher.Tombstone = $true
+        $Searcher.PropertiesToLoad.AddRange(@("name","objectclass","whenchanged"))
+        $Results = $Searcher.FindAll()
+        if ($Results.Count -gt 0) {
+            $Results | ForEach-Object { "$($_.Properties['name']) [$($_.Properties['objectclass'][-1])]" } | Out-File "$OUT\tombstone.txt" -Encoding utf8
+            Write-Host "[KO]   $($Results.Count) deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
+        } else {
+            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
+        }
+    }
+} catch {
+    Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkOrange
+}
+
 # RDP connections
 try {
     $rdp = reg query "HKCU\Software\Microsoft\Terminal Server Client\Default" 2>$null
@@ -540,6 +567,19 @@ try {
     }
 } catch {
     Write-Host "[??]   PuTTY enumeration skipped" -ForegroundColor DarkYellow
+}
+
+# DPAPI Artefacts Check
+try {
+    $dpapi = Get-ChildItem -Path "$env:APPDATA\Microsoft\Credentials" -ErrorAction SilentlyContinue
+    if ($dpapi -and $dpapi.Count -gt 0) {
+        Write-Host "[??]   DPAPI encrypted credentials found ($($dpapi.Count))" -ForegroundColor DarkYellow
+        Write-Host "       - Use SharpDPAPI or Mimikatz for decryption" -ForegroundColor DarkGray
+    } else {
+        Write-Host "[OK]   No DPAPI credentials found" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[OK]   DPAPI check skipped" -ForegroundColor Green
 }
 
 # SSH keys
