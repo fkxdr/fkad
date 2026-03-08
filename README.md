@@ -61,11 +61,6 @@ Most likely these should be run across the network as well.
 
 - [ ] Nessus
 - [ ] Responder
-- [ ] GoWitness
-```sh
-nmap -p80,443 -oX nmap.xml 10.192.14.0/24
-gowitness scan nmap -f nmap.xml --open-only --service-contains http
-```
 
 ## Security / Legal
 
