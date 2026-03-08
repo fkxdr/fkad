@@ -914,6 +914,24 @@ else
   fi
 fi
 
+# Web Screenshots
+echo ""
+echo -e "${GREY}[*] Running GoWitness...${NC}"
+mkdir -p "$OUTPUT_DIR/screenshots"
+nmap -p80,443,8080,8443 ${SUBNET}.0/24 --open -oG - 2>/dev/null | awk '/open/{print $2}' > "$OUTPUT_DIR/http_targets.txt"
+HTTP_COUNT=$(wc -l < "$OUTPUT_DIR/http_targets.txt" 2>/dev/null || echo 0)
+if [ "$HTTP_COUNT" -gt 0 ] && command -v gowitness &>/dev/null; then
+  gowitness scan file -f "$OUTPUT_DIR/http_targets.txt" --screenshot-path "$OUTPUT_DIR/screenshots/" &>/dev/null
+  SHOT_COUNT=$(ls "$OUTPUT_DIR/screenshots/"*.png 2>/dev/null | wc -l)
+  echo -e "${GREEN}[OK] GoWitness captured $SHOT_COUNT screenshot(s) → screenshots/${NC}"
+  echo -e "${GREY}       └─ Add more subnets: nmap -p80,443,8080,8443 <SUBNET>/24 --open -oG - | awk '/open/{print \$2}' >> '$OUTPUT_DIR/http_targets.txt'${NC}"
+  echo -e "${GREY}          gowitness scan file -f '$OUTPUT_DIR/http_targets.txt' --screenshot-path '$OUTPUT_DIR/screenshots/'${NC}"
+elif ! command -v gowitness &>/dev/null; then
+  echo -e "${GREY}[--] GoWitness not found, skipping screenshots${NC}"
+else
+  echo -e "${GREY}[--] No web hosts found on ${SUBNET}.0/24${NC}"
+fi
+
 echo ""
 echo -e "${GREEN}[OK] Full report saved → fkad_report.txt${NC}"
 echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
