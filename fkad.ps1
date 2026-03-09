@@ -517,7 +517,6 @@ try {
     Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
 }
 
-
 # MSSQL Enumeration
 $instances = @()
 try {
@@ -784,6 +783,19 @@ if (Test-Path $histFile) {
 }
 
 Write-Host ""
+
+# ADeleginator
+try {
+    $adelegDir = "$env:TEMP\ADeleg"
+    New-Item -ItemType Directory -Path $adelegDir -Force | Out-Null
+    Invoke-WebRequest -Uri "https://github.com/mtth-bfft/adeleg/releases/latest/download/adeleg.exe" -OutFile "$adelegDir\adeleg.exe" -UseBasicParsing -ErrorAction Stop
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
+    $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+    Write-Host "[OK]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
+} catch {
+    Write-Host "[--]   ADeleginator failed: $_" -ForegroundColor DarkYellow
+}
 
 # PrivescCheck
 try {
