@@ -152,6 +152,61 @@ if ($TamperProtectionStatus -eq $true) {
     Write-Host "       - Tamper Protection is disabled" -ForegroundColor DarkRed
 }
 
+# LSA Protection (RunAsPPL)
+try {
+    $runAsPPL = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "RunAsPPL" -ErrorAction Stop).RunAsPPL
+    if ($runAsPPL -ge 1) {
+        Write-Host "       - LSA Protection (RunAsPPL) is enabled" -ForegroundColor Green
+    } else {
+        Write-Host "       - LSA Protection (RunAsPPL) is disabled - LSASS dump possible without driver" -ForegroundColor DarkRed
+    }
+} catch {
+    Write-Host "       - LSA Protection (RunAsPPL) not configured - LSASS dump possible without driver" -ForegroundColor DarkRed
+}
+
+# Credential Guard
+try {
+    $cgEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard" -Name "EnableVirtualizationBasedSecurity" -ErrorAction SilentlyContinue).EnableVirtualizationBasedSecurity
+    $cgScenario = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\CredentialGuard" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
+    if ($cgScenario -eq 1) {
+        Write-Host "       - Credential Guard is enabled - sekurlsa::logonpasswords will not yield NTLM hashes" -ForegroundColor Green
+    } elseif ($cgEnabled -eq 1) {
+        Write-Host "       - Credential Guard: VBS enabled but scenario not confirmed" -ForegroundColor DarkYellow
+    } else {
+        Write-Host "       - Credential Guard is not enabled - Mimikatz sekurlsa::logonpasswords likely works" -ForegroundColor DarkRed
+    }
+} catch {
+    Write-Host "       - Credential Guard status could not be determined" -ForegroundColor DarkYellow
+}
+
+# Smart App Control
+try {
+    $sacState = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy" -Name "VerifiedAndReputablePolicyState" -ErrorAction Stop).VerifiedAndReputablePolicyState
+    if ($sacState -eq 1) {
+        Write-Host "       - Smart App Control is enabled" -ForegroundColor Green
+    } elseif ($sacState -eq 2) {
+        Write-Host "       - Smart App Control is in evaluation mode, not blocking" -ForegroundColor DarkRed
+    } else {
+        Write-Host "       - Smart App Control is disabled" -ForegroundColor DarkRed
+    }
+} catch {
+    Write-Host "       - Smart App Control is not configured" -ForegroundColor DarkRed
+}
+
+# PUA Protection
+try {
+    $puaState = (Get-MpPreference).PUAProtection
+    if ($puaState -eq 1) {
+        Write-Host "       - Potentially Unwanted Applications (PUA) Protection is enabled" -ForegroundColor Green
+    } elseif ($puaState -eq 2) {
+        Write-Host "       - Potentially Unwanted Applications (PUA) Protection is just auditing, not blocking" -ForegroundColor DarkRed
+    } else {
+        Write-Host "       - Potentially Unwanted Applications (PUA) Protection is disabled" -ForegroundColor DarkRed
+    }
+} catch {
+    Write-Host "       - PUA Protection status could not be determined" -ForegroundColor DarkYellow
+}
+
 # Behavior Monitoring
 if (-not $DefenderPreferences.DisableBehaviorMonitoring) {
     Write-Host "       - Behavior Monitoring is enabled" -ForegroundColor Green
@@ -346,7 +401,7 @@ foreach ($collection in $applockerCollections) {
     }
 }
 if (-not $applockerConfigured) {
-    Write-Host "       - There are no baselines or rules configured" -ForegroundColor DarkRed
+    Write-Host "       - There are no baselines or rules configured, all executables are allowed" -ForegroundColor DarkRed
 }
 
 # Edge SmartScreen
@@ -782,19 +837,6 @@ if (Test-Path $histFile) {
 
 Write-Host ""
 
-# ADeleginator
-try {
-    $adelegDir = "$env:TEMP\ADeleg"
-    New-Item -ItemType Directory -Path $adelegDir -Force | Out-Null
-    Invoke-WebRequest -Uri "https://github.com/mtth-bfft/adeleg/releases/latest/download/adeleg.exe" -OutFile "$adelegDir\adeleg.exe" -UseBasicParsing -ErrorAction Stop
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
-    $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
-} catch {
-    Write-Host "[--]   ADeleginator failed: $_" -ForegroundColor DarkYellow
-}
-
 # PingCastle
 try {
     $pingCastleUrl = "https://github.com/netwrix/pingcastle/releases/download/3.4.2.66/PingCastle_3.4.2.66.zip"
@@ -814,6 +856,19 @@ try {
     }
 } catch {
     Write-Host "[--]   PingCastle failed: $_" -ForegroundColor DarkYellow
+}
+
+# ADeleginator
+try {
+    $adelegDir = "$env:TEMP\ADeleg"
+    New-Item -ItemType Directory -Path $adelegDir -Force | Out-Null
+    Invoke-WebRequest -Uri "https://github.com/mtth-bfft/adeleg/releases/latest/download/adeleg.exe" -OutFile "$adelegDir\adeleg.exe" -UseBasicParsing -ErrorAction Stop
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
+    $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+    Write-Host "[OK]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
+} catch {
+    Write-Host "[--]   ADeleginator failed: $_" -ForegroundColor DarkYellow
 }
 
 # ScriptSentry
