@@ -643,6 +643,30 @@ cd "$OUTPUT_DIR"
 zip -q bloodhound.zip *.json
 cd "$CURRENT_PATH"
 
+# MDT Detection
+MDT_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(objectclass=intellimirrorSCP)" cn netbootServer 2>/dev/null)
+MDT_COUNT=$(echo "$MDT_OUTPUT" | grep -c "^cn:")
+if [ "$MDT_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] MDT detected ($MDT_COUNT instance(s))${NC}"
+  while IFS= read -r line; do
+    CN=$(echo "$line" | awk '{print $2}')
+    NETBOOT=$(echo "$MDT_OUTPUT" | grep -A 20 "cn: $CN" | grep "^netbootServer:" | awk '{print $2}' | head -1)
+
+    if [ ! -z "$NETBOOT" ]; then
+      MDT_HOST_FQDN=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(distinguishedName=$NETBOOT)" dNSHostName 2>/dev/null | grep "^dNSHostName:" | awk '{print $2}' | head -1)
+      [ -z "$MDT_HOST_FQDN" ] && MDT_HOST_FQDN="UNKNOWN"
+    else
+      MDT_HOST_FQDN="UNKNOWN"
+    fi
+    echo -e "${RED}       └─ $CN on $MDT_HOST_FQDN${NC}"
+    echo -e "${GREY}          └─ Check credentials in DeploymentShare:${NC}"
+    echo -e "${GREY}             smbclient //$MDT_HOST_FQDN/DeploymentShare\$ -U '$FULL_USER%$PASSWORD'${NC}"
+    echo -e "${GREY}             → Bootstrap.ini / CustomSettings.ini (cleartext creds)${NC}"
+  done < <(echo "$MDT_OUTPUT" | grep "^cn:")
+else
+  echo -e "${GREEN}[OK] No MDT infrastructure detected${NC}"
+fi
+
 # SCCM/MECM Detection
 SCCM_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M sccm 2>/dev/null)
 if echo "$SCCM_OUTPUT" | grep -qi "sccm\|mecm\|\[+\]"; then
