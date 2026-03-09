@@ -909,6 +909,16 @@ try {
 }
 
 Write-Host ""
-Write-Host "[OK] Done. Output folder: $OUT" -ForegroundColor Green
+Write-Host "Done. Output folder: $OUT" -ForegroundColor DarkGray
+$lines = @(
+    '||||||A red haze shatters the screen violently, its security slipping into darkness.||||||',
+    '||||||A r d haze s at ers t e scre n vio entl , it  securi y sli p ng   to darknes .||||||',
+    '|| |||A r d h  e s a  e s t e sc e n vi  ent  , i   se uri y sl  p ng   to dark  s .||||||',
+    '|  |||  r d    e s a  e   t e s  e n vi     l , i      ur  y s   p  g    o dar   s .|||| |',
+    '    ||    d    e      e   t      e   v      l           r    s      g      d     s  |||   ',
+    '    |                                                                               ||    ',
+    ''
+)
+foreach ($line in $lines) { Write-Host $line -ForegroundColor DarkRed }
 Stop-Transcript | Out-Null
 Write-Host ""
