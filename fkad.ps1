@@ -803,14 +803,14 @@ try {
     Invoke-WebRequest -Uri $pingCastleUrl -OutFile $pingCastlePath -UseBasicParsing
     Expand-Archive -Path $pingCastlePath -DestinationPath $pingCastleDir -Force
     Push-Location $pingCastleDir
-    & ".\PingCastle.exe" --healthcheck --datefile 2>&1
+    $pingOutput = & ".\PingCastle.exe" --healthcheck --datefile 2>&1
     Pop-Location
 
-    if ($output -match "not connected to a domain") {
+    if ($pingOutput -match "not connected to a domain|couldn't guess the domain") {
         Write-Host "[--]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
     } else {
         Move-Item -Path "$pingCastleDir\*.html" -Destination "$OUT\PingCastle.html" -Force -ErrorAction SilentlyContinue
-        Write-Host "[OK]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix (October 25)" -ForegroundColor Green
+        Write-Host "[OK]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix October 2025)" -ForegroundColor Green
     }
 } catch {
     Write-Host "[--]   PingCastle failed: $_" -ForegroundColor DarkYellow
