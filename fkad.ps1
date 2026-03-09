@@ -606,13 +606,11 @@ foreach ($task in $allTasks) {
     $name = $task.TaskName
     $actions = $task.Actions | ForEach-Object { $_.Execute + " " + $_.Arguments }
     $actionStr = $actions -join " "
-
     $isThirdParty = $path -notmatch '^\\Microsoft\\'
     $isSuspiciousAction = $actionStr -match 'encoded|enc |bypass|hidden|\.vbs|\.js|\.bat|\.cmd|\.ps1|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin' `
         -or ($actionStr -match '%Temp%|%AppData%|%Roaming%|\\Temp\\|\\AppData\\|\\Roaming\\' `
         -and $actionStr -notmatch 'System32|SysWOW64|SystemRoot|ProgramFiles|\\Windows\\')
-
-    if ($isThirdParty -or $isSuspiciousAction) {
+    if ($isThirdParty -or ($isSuspiciousAction -and $path -notmatch '^\\Microsoft\\')) {
         $suspicious += [PSCustomObject]@{
             Path    = $path
             Name    = $name
@@ -628,7 +626,7 @@ if ($suspicious.Count -gt 0) {
     Write-Host "[OK]   No suspicious scheduled tasks found" -ForegroundColor Green
 }
 
-# Startup items
+# Startup items (filtered)
 $startupOutput = Get-CimInstance Win32_StartupCommand |
     Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" } |
     Format-Table -AutoSize
