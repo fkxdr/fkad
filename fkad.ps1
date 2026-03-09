@@ -225,6 +225,7 @@ if ($isAdmin) {
     }
 }
 
+
 # ASR Rules
 $asrRulesDefinitions = @{
     "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550" = "Block executable content from email client and webmail"
@@ -275,8 +276,6 @@ if (IsAdmin) {
     Write-Host "       - ASR rule enumeration requires more privs" -ForegroundColor DarkGray
 }
 
-Write-Host ""
-
 # BitLocker
 $bitlockerStatus = (New-Object -ComObject Shell.Application).NameSpace('C:').Self.ExtendedProperty('System.Volume.BitLockerProtection')
 if ($bitlockerStatus -eq 1) {
@@ -286,6 +285,7 @@ if ($bitlockerStatus -eq 1) {
 } else {
     Write-Host "[??]   C: drive BitLocker encryption is unknown" -ForegroundColor DarkYellow
 }
+
 
 # WDAC
 try {
@@ -307,12 +307,12 @@ try {
     }
 
     $ciLabel = switch ($codeIntegrityStatus) { 0 { "Off" } 1 { "Audit Mode" } 2 { "Enforced" } Default { "Unknown" } }
-    $ciColor = switch ($codeIntegrityStatus) { 2 { "Green" } 1 { "DarkYellow" } Default { "DarkRed" } }
+    $ciColor = switch ($codeIntegrityStatus) { 2 { "Green" } 1 { "DarkRed" } Default { "DarkRed" } }
     $ciStatus = switch ($codeIntegrityStatus) { 2 { "[OK]" } 1 { "[??]" } Default { "[KO]" } }
     Write-Host "       - Kernel Mode Code Integrity: $ciLabel" -ForegroundColor $ciColor
 
     $umciLabel = switch ($userModeStatus) { 0 { "Off" } 1 { "Audit Mode" } 2 { "Enforced" } Default { "Unknown" } }
-    $umciColor = switch ($userModeStatus) { 2 { "Green" } 1 { "DarkYellow" } Default { "DarkRed" } }
+    $umciColor = switch ($userModeStatus) { 2 { "Green" } 1 { "DarkRed" } Default { "DarkRed" } }
     $umciStatus = switch ($userModeStatus) { 2 { "[OK]" } 1 { "[??]" } Default { "[KO]" } }
     Write-Host "       - User Mode Code Integrity: $umciLabel" -ForegroundColor $umciColor
 
@@ -369,8 +369,8 @@ if ($edgeSSvalue -eq 0) {
     Write-Host "[OK]   Microsoft Edge SmartScreen is enabled" -ForegroundColor Green
 }
 
-Write-Host ""
 
+Write-Host ""
 $privMap = @{
     "SeDebugPrivilege"           = "Read LSASS / inject into any process"
     "SeImpersonatePrivilege"     = "Token impersonation -> PrintSpoofer/JuicyPotato"
@@ -395,6 +395,7 @@ foreach ($priv in $privMap.Keys) {
 
 Write-Host ""
 
+
 # SCCM/SCOM Enumeration
 try {
     $smContainer = Get-ADObject -Filter {Name -eq "System Management"} -SearchBase $([ADSI]"LDAP://RootDSE").defaultNamingContext -ErrorAction Stop
@@ -407,6 +408,8 @@ try {
 } catch {
     Write-Host "[OK]   No System Center (SCCM/SCOM) infrastructure detected" -ForegroundColor Green
 }
+
+
 
 # GPO ACL Check (AD level)
 $dangerousPerms = @("GpoEditDeleteModifySecurity", "GpoEdit", "GpoApply")
@@ -431,13 +434,13 @@ try {
   if ($gpoFindings.Count -gt 0) {
     Write-Host "[KO]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
     foreach ($f in $gpoFindings) {
-      Write-Host "       └─ '$($f.GPO)' → $($f.Trustee) ($($f.Permission))" -ForegroundColor DarkRed
+      Write-Host "       L- '$($f.GPO)' - $($f.Trustee) ($($f.Permission))" -ForegroundColor DarkRed
     }
   } else {
     Write-Host "[OK]   No non-admin GPO write permissions found" -ForegroundColor Green
   }
 } catch {
-  Write-Host "[--]   GPO ACL check requires RSAT GroupPolicy module" -ForegroundColor DarkGray
+  Write-Host "[--]   GPO ACL check requires RSAT GroupPolicy module" -ForegroundColor DarkYellow
 }
 
 # SYSVOL File ACL Check
@@ -463,7 +466,7 @@ try {
     if ($sysvolFindings.Count -gt 0) {
       Write-Host "[KO]   $($sysvolFindings.Count) SYSVOL GPO folder(s) with non-admin write permissions" -ForegroundColor DarkRed
       foreach ($f in $sysvolFindings) {
-        Write-Host "       └─ $($f.Folder) → $($f.Identity) ($($f.Rights))" -ForegroundColor DarkRed
+        Write-Host "       L- $($f.Folder) - $($f.Identity) ($($f.Rights))" -ForegroundColor DarkRed
       }
     } else {
       Write-Host "[OK]   No non-admin SYSVOL write permissions found" -ForegroundColor Green
@@ -472,8 +475,9 @@ try {
     Write-Host "[--]   SYSVOL path not accessible" -ForegroundColor DarkGray
   }
 } catch {
-  Write-Host "[--]   SYSVOL ACL check failed: $_" -ForegroundColor DarkGray
+  Write-Host "[--]   SYSVOL ACL check failed: $_" -ForegroundColor DarkYellow
 }
+
 
 # Tombstone deleted AD objects
 try {
@@ -513,7 +517,6 @@ try {
     Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
 }
 
-Write-Host ""
 
 # MSSQL Enumeration
 $instances = @()
@@ -564,6 +567,8 @@ if ($instances) {
 } else {
     Write-Host "[OK]   No MSSQL instances detected" -ForegroundColor Green
 }
+
+Write-Host ""
 
 # Admins and logged on users
 $adminOutput = net localgroup administrators
@@ -672,6 +677,7 @@ if ($msiOutput) {
 }
 
 Write-Host ""
+
 
 # RDP connections
 try {
