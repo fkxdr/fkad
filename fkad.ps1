@@ -795,13 +795,25 @@ try {
     Write-Host "[--]   ADeleginator failed: $_" -ForegroundColor DarkYellow
 }
 
-# PrivescCheck
+# PingCastle
 try {
-    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck' -Format HTML"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   PrivescCheck -> PrivescCheck.html" -ForegroundColor Green
+    $pingCastleUrl = "https://github.com/netwrix/pingcastle/releases/download/3.4.2.66/PingCastle_3.4.2.66.zip"
+    $pingCastlePath = "$env:TEMP\PingCastle_3.4.2.66.zip"
+    $pingCastleDir = "$env:TEMP\PingCastle"
+    Invoke-WebRequest -Uri $pingCastleUrl -OutFile $pingCastlePath -UseBasicParsing
+    Expand-Archive -Path $pingCastlePath -DestinationPath $pingCastleDir -Force
+    Push-Location $pingCastleDir
+    & ".\PingCastle.exe" --healthcheck --datefile 2>&1
+    Pop-Location
+
+    if ($output -match "not connected to a domain") {
+        Write-Host "[--]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
+    } else {
+        Move-Item -Path "$pingCastleDir\*.html" -Destination "$OUT\PingCastle.html" -Force -ErrorAction SilentlyContinue
+        Write-Host "[OK]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix (October 25)" -ForegroundColor Green
+    }
 } catch {
-    Write-Host "[--]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[--]   PingCastle failed: $_" -ForegroundColor DarkYellow
 }
 
 # ScriptSentry
@@ -832,25 +844,13 @@ try {
     Write-Host "[--]   HardeningKitty failed: $_" -ForegroundColor DarkYellow
 }
 
-# PingCastle
+# PrivescCheck
 try {
-    $pingCastleUrl = "https://github.com/netwrix/pingcastle/releases/download/3.4.2.66/PingCastle_3.4.2.66.zip"
-    $pingCastlePath = "$env:TEMP\PingCastle_3.4.2.66.zip"
-    $pingCastleDir = "$env:TEMP\PingCastle"
-    Invoke-WebRequest -Uri $pingCastleUrl -OutFile $pingCastlePath -UseBasicParsing
-    Expand-Archive -Path $pingCastlePath -DestinationPath $pingCastleDir -Force
-    Push-Location $pingCastleDir
-    & ".\PingCastle.exe" --healthcheck --datefile 2>&1
-    Pop-Location
-
-    if ($output -match "not connected to a domain") {
-        Write-Host "[--]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
-    } else {
-        Move-Item -Path "$pingCastleDir\*.html" -Destination "$OUT\PingCastle.html" -Force -ErrorAction SilentlyContinue
-        Write-Host "[OK]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix (October 25)" -ForegroundColor Green
-    }
+    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck' -Format HTML"
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+    Write-Host "[OK]   PrivescCheck -> PrivescCheck.html" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   PingCastle failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[--]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
 }
 
 Write-Host ""
