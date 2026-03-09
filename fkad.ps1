@@ -225,7 +225,6 @@ if ($isAdmin) {
     }
 }
 
-
 # ASR Rules
 $asrRulesDefinitions = @{
     "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550" = "Block executable content from email client and webmail"
@@ -277,29 +276,6 @@ if (IsAdmin) {
 }
 
 Write-Host ""
-$privMap = @{
-    "SeDebugPrivilege"           = "Read LSASS / inject into any process"
-    "SeImpersonatePrivilege"     = "Token impersonation -> PrintSpoofer/JuicyPotato"
-    "SeAssignPrimaryPrivilege"   = "Assign primary token -> privilege escalation"
-    "SeTcbPrivilege"             = "Act as OS -> create tokens"
-    "SeBackupPrivilege"          = "Read any file ignoring ACLs -> NTDS.dit"
-    "SeRestorePrivilege"         = "Write any file ignoring ACLs"
-    "SeCreateTokenPrivilege"     = "Create arbitrary tokens"
-    "SeLoadDriverPrivilege"      = "Load malicious kernel driver"
-    "SeTakeOwnershipPrivilege"   = "Take ownership of any object"
-    "SeRelabelPrivilege"         = "Modify integrity levels"
-}
-
-Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
-
-$whoamiOut = whoami /priv
-foreach ($priv in $privMap.Keys) {
-    if ($whoamiOut -match $priv) {
-        Write-Host "       - $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
-    }
-}
-
-Write-Host ""
 
 # BitLocker
 $bitlockerStatus = (New-Object -ComObject Shell.Application).NameSpace('C:').Self.ExtendedProperty('System.Volume.BitLockerProtection')
@@ -310,7 +286,6 @@ if ($bitlockerStatus -eq 1) {
 } else {
     Write-Host "[??]   C: drive BitLocker encryption is unknown" -ForegroundColor DarkYellow
 }
-
 
 # WDAC
 try {
@@ -394,6 +369,32 @@ if ($edgeSSvalue -eq 0) {
     Write-Host "[OK]   Microsoft Edge SmartScreen is enabled" -ForegroundColor Green
 }
 
+Write-Host ""
+
+$privMap = @{
+    "SeDebugPrivilege"           = "Read LSASS / inject into any process"
+    "SeImpersonatePrivilege"     = "Token impersonation -> PrintSpoofer/JuicyPotato"
+    "SeAssignPrimaryPrivilege"   = "Assign primary token -> privilege escalation"
+    "SeTcbPrivilege"             = "Act as OS -> create tokens"
+    "SeBackupPrivilege"          = "Read any file ignoring ACLs -> NTDS.dit"
+    "SeRestorePrivilege"         = "Write any file ignoring ACLs"
+    "SeCreateTokenPrivilege"     = "Create arbitrary tokens"
+    "SeLoadDriverPrivilege"      = "Load malicious kernel driver"
+    "SeTakeOwnershipPrivilege"   = "Take ownership of any object"
+    "SeRelabelPrivilege"         = "Modify integrity levels"
+}
+
+Run "Privileges (whoami /all)" { whoami /all } "whoami_all.txt"
+
+$whoamiOut = whoami /priv
+foreach ($priv in $privMap.Keys) {
+    if ($whoamiOut -match $priv) {
+        Write-Host "       - $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
+    }
+}
+
+Write-Host ""
+
 # SCCM/SCOM Enumeration
 try {
     $smContainer = Get-ADObject -Filter {Name -eq "System Management"} -SearchBase $([ADSI]"LDAP://RootDSE").defaultNamingContext -ErrorAction Stop
@@ -407,6 +408,112 @@ try {
     Write-Host "[OK]   No System Center (SCCM/SCOM) infrastructure detected" -ForegroundColor Green
 }
 
+# GPO ACL Check (AD level)
+$dangerousPerms = @("GpoEditDeleteModifySecurity", "GpoEdit", "GpoApply")
+$nonAdminExclusions = @("Domain Admins", "Enterprise Admins", "SYSTEM", "Administrators")
+
+try {
+  $GPOs = Get-GPO -All -ErrorAction Stop
+  $gpoFindings = @()
+
+  foreach ($GPO in $GPOs) {
+    $ACL = Get-GPPermission -Guid $GPO.Id -All -ErrorAction SilentlyContinue
+    foreach ($ACE in $ACL) {
+      $trustee = $ACE.Trustee.Name
+      $perm = $ACE.Permission.ToString()
+      $isAdmin = $nonAdminExclusions | Where-Object { $trustee -match $_ }
+      if ($perm -match "GpoEdit" -and -not $isAdmin) {
+        $gpoFindings += [PSCustomObject]@{ GPO = $GPO.DisplayName; Trustee = $trustee; Permission = $perm }
+      }
+    }
+  }
+
+  if ($gpoFindings.Count -gt 0) {
+    Write-Host "[KO]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
+    foreach ($f in $gpoFindings) {
+      Write-Host "       └─ '$($f.GPO)' → $($f.Trustee) ($($f.Permission))" -ForegroundColor DarkRed
+    }
+  } else {
+    Write-Host "[OK]   No non-admin GPO write permissions found" -ForegroundColor Green
+  }
+} catch {
+  Write-Host "[--]   GPO ACL check requires RSAT GroupPolicy module" -ForegroundColor DarkGray
+}
+
+# SYSVOL File ACL Check
+try {
+  $SYSVOLPath = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\Policies"
+  $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+  $sysvolFindings = @()
+
+  if (Test-Path $SYSVOLPath) {
+    $folders = Get-ChildItem -Path $SYSVOLPath -Directory -ErrorAction SilentlyContinue
+    foreach ($folder in $folders) {
+      $ACL = Get-Acl -Path $folder.FullName -ErrorAction SilentlyContinue
+      foreach ($ACE in $ACL.Access) {
+        $rights = $ACE.FileSystemRights.ToString()
+        $identity = $ACE.IdentityReference.ToString()
+        $isAdmin = $nonAdminExclusions | Where-Object { $identity -match $_ }
+        if ($rights -match "Write|FullControl|Modify" -and -not $isAdmin) {
+          $sysvolFindings += [PSCustomObject]@{ Folder = $folder.Name; Identity = $identity; Rights = $rights }
+        }
+      }
+    }
+
+    if ($sysvolFindings.Count -gt 0) {
+      Write-Host "[KO]   $($sysvolFindings.Count) SYSVOL GPO folder(s) with non-admin write permissions" -ForegroundColor DarkRed
+      foreach ($f in $sysvolFindings) {
+        Write-Host "       └─ $($f.Folder) → $($f.Identity) ($($f.Rights))" -ForegroundColor DarkRed
+      }
+    } else {
+      Write-Host "[OK]   No non-admin SYSVOL write permissions found" -ForegroundColor Green
+    }
+  } else {
+    Write-Host "[--]   SYSVOL path not accessible" -ForegroundColor DarkGray
+  }
+} catch {
+  Write-Host "[--]   SYSVOL ACL check failed: $_" -ForegroundColor DarkGray
+}
+
+# Tombstone deleted AD objects
+try {
+    if (Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue) {
+        $Deleted = Get-ADObject -Filter {isDeleted -eq $true} -IncludeDeletedObjects `
+            -Properties Name, ObjectClass, whenChanged, LastKnownParent `
+            | Where-Object { $_.ObjectClass -in @("user","computer","group") }
+        if ($Deleted) {
+            $Count = ($Deleted | Measure-Object).Count
+            $Deleted | Select-Object Name, ObjectClass, whenChanged, LastKnownParent | Out-File "$OUT\tombstone.txt" -Encoding utf8
+            Write-Host "[KO]   $Count deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
+            $Interesting = $Deleted | Where-Object { $_.Name -match "svc|admin|backup|sql|service|mgmt" }
+            if ($Interesting) {
+                $Interesting | ForEach-Object { Write-Host "       - $($_.Name) [$($_.ObjectClass)]" -ForegroundColor DarkGray }
+            }
+        } else {
+            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
+        }
+    } else {
+        $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+        $DN = "DC=" + ($Domain.Name -replace "\.", ",DC=")
+        $Searcher = New-Object System.DirectoryServices.DirectorySearcher
+        $Searcher.SearchRoot = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=Deleted Objects,$DN")
+        $Searcher.Filter = "(isDeleted=TRUE)"
+        $Searcher.SearchScope = "OneLevel"
+        $Searcher.Tombstone = $true
+        $Searcher.PropertiesToLoad.AddRange(@("name","objectclass","whenchanged"))
+        $Results = $Searcher.FindAll()
+        if ($Results.Count -gt 0) {
+            $Results | ForEach-Object { "$($_.Properties['name']) [$($_.Properties['objectclass'][-1])]" } | Out-File "$OUT\tombstone.txt" -Encoding utf8
+            Write-Host "[KO]   $($Results.Count) deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
+        } else {
+            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
+        }
+    }
+} catch {
+    Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
+}
+
+Write-Host ""
 
 # MSSQL Enumeration
 $instances = @()
@@ -457,8 +564,6 @@ if ($instances) {
 } else {
     Write-Host "[OK]   No MSSQL instances detected" -ForegroundColor Green
 }
-
-Write-Host ""
 
 # Admins and logged on users
 $adminOutput = net localgroup administrators
@@ -567,44 +672,6 @@ if ($msiOutput) {
 }
 
 Write-Host ""
-
-# Tombstone deleted AD objects
-try {
-    if (Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue) {
-        $Deleted = Get-ADObject -Filter {isDeleted -eq $true} -IncludeDeletedObjects `
-            -Properties Name, ObjectClass, whenChanged, LastKnownParent `
-            | Where-Object { $_.ObjectClass -in @("user","computer","group") }
-        if ($Deleted) {
-            $Count = ($Deleted | Measure-Object).Count
-            $Deleted | Select-Object Name, ObjectClass, whenChanged, LastKnownParent | Out-File "$OUT\tombstone.txt" -Encoding utf8
-            Write-Host "[KO]   $Count deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
-            $Interesting = $Deleted | Where-Object { $_.Name -match "svc|admin|backup|sql|service|mgmt" }
-            if ($Interesting) {
-                $Interesting | ForEach-Object { Write-Host "       - $($_.Name) [$($_.ObjectClass)]" -ForegroundColor DarkGray }
-            }
-        } else {
-            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
-        }
-    } else {
-        $Domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
-        $DN = "DC=" + ($Domain.Name -replace "\.", ",DC=")
-        $Searcher = New-Object System.DirectoryServices.DirectorySearcher
-        $Searcher.SearchRoot = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=Deleted Objects,$DN")
-        $Searcher.Filter = "(isDeleted=TRUE)"
-        $Searcher.SearchScope = "OneLevel"
-        $Searcher.Tombstone = $true
-        $Searcher.PropertiesToLoad.AddRange(@("name","objectclass","whenchanged"))
-        $Results = $Searcher.FindAll()
-        if ($Results.Count -gt 0) {
-            $Results | ForEach-Object { "$($_.Properties['name']) [$($_.Properties['objectclass'][-1])]" } | Out-File "$OUT\tombstone.txt" -Encoding utf8
-            Write-Host "[KO]   $($Results.Count) deleted object(s) in tombstone -> tombstone.txt" -ForegroundColor DarkRed
-        } else {
-            Write-Host "[OK]   No deleted objects in tombstone" -ForegroundColor Green
-        }
-    }
-} catch {
-    Write-Host "[--]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
-}
 
 # RDP connections
 try {
