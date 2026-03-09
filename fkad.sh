@@ -442,6 +442,23 @@ else
   echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
 fi
 
+# Unconstrained Delegation Check - Users
+UNCON_USERS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(&(objectClass=user)(objectCategory=person)(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))" \
+  sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+
+UNCON_USER_COUNT=$(echo "$UNCON_USERS" | grep -v "^$" | wc -l)
+
+if [ "$UNCON_USER_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $UNCON_USER_COUNT user(s) with Unconstrained Delegation${NC}"
+  echo "$UNCON_USERS" | while read -r user; do
+    [ ! -z "$user" ] && echo -e "${RED}       └─ $user${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No users with Unconstrained Delegation${NC}"
+fi
+
 # Constrained Delegation Check
 CONSTRAINED=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
