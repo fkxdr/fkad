@@ -90,6 +90,32 @@ if ($languageMode -eq "FullLanguage") {
 
 Write-Host ""
 
+Run "System Info" { systeminfo } "systeminfo.txt"
+
+# Privs whoami /all
+$privMap = @{
+    "SeDebugPrivilege"           = "Read LSASS / inject into any process"
+    "SeImpersonatePrivilege"     = "Token impersonation -> PrintSpoofer/JuicyPotato"
+    "SeAssignPrimaryPrivilege"   = "Assign primary token -> privilege escalation"
+    "SeTcbPrivilege"             = "Act as OS -> create tokens"
+    "SeBackupPrivilege"          = "Read any file ignoring ACLs -> NTDS.dit"
+    "SeRestorePrivilege"         = "Write any file ignoring ACLs"
+    "SeCreateTokenPrivilege"     = "Create arbitrary tokens"
+    "SeLoadDriverPrivilege"      = "Load malicious kernel driver"
+    "SeTakeOwnershipPrivilege"   = "Take ownership of any object"
+    "SeRelabelPrivilege"         = "Modify integrity levels"
+}
+$whoamiOut = whoami /all
+$whoamiOut | Out-File "$OUT\whoami_all.txt" -Encoding utf8
+Write-Host "[ OK ]   Privileges (whoami /all) -> whoami_all.txt" -ForegroundColor Green
+foreach ($priv in $privMap.Keys) {
+    if ($whoamiOut -match $priv) {
+        Write-Host "          - [P110]   $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
+    }
+}
+
+Write-Host ""
+
 # AMRunningMode Status
 $DefenderPreferences = Get-MpPreference
 $DefenderStatus = Get-MpComputerStatus
@@ -425,29 +451,6 @@ if ($edgeSSvalue -eq 0) {
     Write-Host "[ OK ]   Microsoft Edge SmartScreen is enabled" -ForegroundColor Green
 }
 
-Write-Host ""
-
-# Privs whoami /all
-$privMap = @{
-    "SeDebugPrivilege"           = "Read LSASS / inject into any process"
-    "SeImpersonatePrivilege"     = "Token impersonation -> PrintSpoofer/JuicyPotato"
-    "SeAssignPrimaryPrivilege"   = "Assign primary token -> privilege escalation"
-    "SeTcbPrivilege"             = "Act as OS -> create tokens"
-    "SeBackupPrivilege"          = "Read any file ignoring ACLs -> NTDS.dit"
-    "SeRestorePrivilege"         = "Write any file ignoring ACLs"
-    "SeCreateTokenPrivilege"     = "Create arbitrary tokens"
-    "SeLoadDriverPrivilege"      = "Load malicious kernel driver"
-    "SeTakeOwnershipPrivilege"   = "Take ownership of any object"
-    "SeRelabelPrivilege"         = "Modify integrity levels"
-}
-$whoamiOut = whoami /all
-$whoamiOut | Out-File "$OUT\whoami_all.txt" -Encoding utf8
-Write-Host "[ OK ]   Privileges (whoami /all) -> whoami_all.txt" -ForegroundColor Green
-foreach ($priv in $privMap.Keys) {
-    if ($whoamiOut -match $priv) {
-        Write-Host "          - [P110]   $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
-    }
-}
 Write-Host ""
 
 # SCCM/SCOM Enumeration
