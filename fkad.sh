@@ -416,6 +416,8 @@ else
   fi
 fi
 
+echo ""
+
 # Unconstrained Delegation Check (uses DC_SAMNAMES cached from initial DC enumeration)
 UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "$DOMAIN_DN" \
@@ -804,6 +806,8 @@ else
   echo -e "${GREEN}[OK] No Pre-Windows 2000 computer accounts found${NC}"
 fi
 
+echo ""
+
 # LAPS Check
 LAPS_V1=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
@@ -1097,7 +1101,6 @@ fi
 
 # GoWitness
 echo ""
-echo -e "${GREY}[*] Running GoWitness...${NC}"
 mkdir -p "$OUTPUT_DIR/screenshots"
 nmap -p80,443,8080,8443 ${SUBNET}.0/24 --open -oG - 2>/dev/null | awk '/open/{print $2}' | grep -E '^[0-9]' | while read -r ip; do echo "http://$ip"; echo "https://$ip"; done > "$OUTPUT_DIR/http_targets.txt"
 HTTP_COUNT=$([ -f "$OUTPUT_DIR/http_targets.txt" ] && wc -l < "$OUTPUT_DIR/http_targets.txt" || echo 0)
@@ -1173,9 +1176,6 @@ if [ "$BH_MODE" != "DCOnly" ]; then
       SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/results.txt" 2>/dev/null || echo 0)
       if [ "$SPIDER_COUNT" -gt 0 ]; then
         echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/results.txt${NC}"
-        while IFS= read -r line; do
-          echo -e "${RED}       └─ $line${NC}"
-        done < "$OUTPUT_DIR/manspider/results.txt"
       else
         echo -e "${GREEN}[OK] Manspider found no sensitive content on readable shares${NC}"
         rm -rf "$OUTPUT_DIR/manspider"
