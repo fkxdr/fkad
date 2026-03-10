@@ -419,10 +419,12 @@ UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   grep "^sAMAccountName:" | awk '{print $2}')
 
 NON_DC_UNCON=""
+dc_short=$(echo "$DC_FQDN" | cut -d'.' -f1 | tr '[:upper:]' '[:lower:]')
 while IFS= read -r system; do
   [ -z "$system" ] && continue
   system_lower=$(echo "$system" | tr '[:upper:]' '[:lower:]')
-  if ! echo "$DC_SAMNAMES" | grep -qx "$system_lower"; then
+  system_clean="${system_lower%\$}"
+  if ! echo "$DC_SAMNAMES" | grep -qx "$system_lower" && [ "$system_clean" != "$dc_short" ]; then
     NON_DC_UNCON="${NON_DC_UNCON}${system}\n"
   fi
 done <<< "$UNCON_SYSTEMS"
