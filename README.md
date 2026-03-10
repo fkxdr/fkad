@@ -13,7 +13,7 @@ chmod +x fkad.sh
 ./fkad.sh -u <user> -p '<password>' -d <dc-ip/domain.com>
 ```
 
-<img width="2208" height="1166" alt="screen" src="https://github.com/user-attachments/assets/c5742863-ab7e-400a-a386-f3556759f57c" />
+<img width="1819" height="1122" alt="image" src="https://github.com/user-attachments/assets/49617e19-a7ad-48df-b2d8-b2d5e5f595e0" />
 
 Example:
 
