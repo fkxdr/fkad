@@ -712,6 +712,32 @@ else
   echo -e "${GREY}[--] Could not determine MachineAccountQuota${NC}"
 fi
 
+# DCShadow check
+if [ -z "$MAQ" ] || [ "$MAQ" -eq 0 ]; then
+  echo -e "${GREEN}       └─ DCShadow is not possible (MachineAccountQuota: 0)${NC}"
+else
+  if [ -x "/root/.local/bin/dacledit.py" ]; then
+    DACLEDIT_CMD="/root/.local/bin/dacledit.py"
+  elif command -v dacledit.py &>/dev/null; then
+    DACLEDIT_CMD="dacledit.py"
+  else
+    DACLEDIT_CMD=""
+  fi
+  if [ ! -z "$DACLEDIT_CMD" ]; then
+    DCSHADOW_ACE=$($DACLEDIT_CMD -action read -target-dn "$DOMAIN_DN" \
+      -dc-ip $DC_IP "$DOMAIN/$USERNAME:$PASSWORD" 2>/dev/null | \
+      grep -iE "GenericAll|WriteDacl|DS-Install-Replica|Manage-Topology" | \
+      grep -i "$USERNAME")
+    if [ ! -z "$DCSHADOW_ACE" ]; then
+      echo -e "${RED}       └─ DCShadow preconditions may be met (ACL on domain NC): https://github.com/ShutdownRepo/dcshadow${NC}"
+    else
+      echo -e "${GREEN}       └─ DCShadow does not appear possible (no critical ACEs on domain NC)${NC}"
+    fi
+  else
+    echo -e "${GREY}       └─ dacledit.py not found, skipping DCShadow ACL check${NC}"
+  fi
+fi
+
 # Pre-Windows 2000 Computer Accounts
 PRE2K_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M pre2k 2>/dev/null)
 if echo "$PRE2K_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
