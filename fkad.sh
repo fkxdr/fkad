@@ -1150,10 +1150,8 @@ nxc smb ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null \
 READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" 2>/dev/null || echo 0)
 if [ "$READABLE" -gt 0 ]; then
   echo -e "${RED}[KO] $READABLE readable/writable share(s) found → smb_shares.txt${NC}"
-  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$AD_USER' -p '$PASSWORD' --shares'${NC}"
 else
   echo -e "${GREEN}[OK] No readable/writable shares found on ${SUBNET}.0/24${NC}"
-  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$AD_USER' -p '$PASSWORD' --shares'${NC}"
 fi
 
 # Manspider against readable SMB Shares
@@ -1188,6 +1186,5 @@ if [ "$BH_MODE" != "DCOnly" ]; then
 fi
 
 echo ""
-echo -e "${GREEN}[OK] Full report saved → fkad_report.txt${NC}"
-echo -e "${GREY}[--] Copy results to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
+echo -e "${GREEN}[OK] Full report saved → Copy to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
 echo ""
