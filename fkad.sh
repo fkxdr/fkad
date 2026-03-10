@@ -852,32 +852,30 @@ echo ""
 LAPS_V1=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
   "(name=ms-Mcs-AdmPwd)" name 2>/dev/null | grep -c "name: ms-Mcs-AdmPwd")
-
 LAPS_V2=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
   "(name=msLAPS-Password)" name 2>/dev/null | grep -c "name: msLAPS-Password")
 
-if [ "$LAPS_V1" -gt 0 ]; then
-  LAPS_READABLE=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -M laps 2>/dev/null | grep -v "No result found" | grep -c "Password:")
-  if [ "$LAPS_READABLE" -gt 0 ]; then
-    echo -e "${RED}[KO] LAPSv1 deployed - passwords readable by current user${NC}"
-  else
-    echo -e "${GREEN}[OK] LAPSv1 deployed - passwords not readable${NC}"
-    echo -e "${GREY}       └─ LAPSv1 stores passwords in cleartext attribute${NC}"
-  fi
+if [ "$LAPS_V1" -eq 0 ] && [ "$LAPS_V2" -eq 0 ]; then
+  echo -e "${RED}[KO] LAPS not deployed (neither LAPSv1 nor LAPSv2)${NC}"
 else
-  echo -e "${RED}[KO] LAPSv1 not deployed${NC}"
-fi
-
-if [ "$LAPS_V2" -gt 0 ]; then
-  LAPS_V2_READABLE=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -M laps --laps-v2 2>/dev/null | grep -v "No result found" | grep -c "Password:")
-  if [ "$LAPS_V2_READABLE" -gt 0 ]; then
-    echo -e "${RED}[KO] LAPSv2 deployed - passwords readable by current user${NC}"
-  else
-    echo -e "${GREEN}[OK] LAPSv2 deployed - passwords not readable by current user${NC}"
+  if [ "$LAPS_V1" -gt 0 ]; then
+    LAPS_READABLE=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -M laps 2>/dev/null | grep -v "No result found" | grep -c "Password:")
+    if [ "$LAPS_READABLE" -gt 0 ]; then
+      echo -e "${RED}[KO] LAPSv1 deployed - passwords readable by current user${NC}"
+    else
+      echo -e "${GREEN}[OK] LAPSv1 deployed - passwords not readable${NC}"
+      echo -e "${GREY}       └─ LAPSv1 stores passwords in cleartext attribute${NC}"
+    fi
   fi
-else
-  echo -e "${RED}[KO] LAPSv2 not deployed${NC}"
+  if [ "$LAPS_V2" -gt 0 ]; then
+    LAPS_V2_READABLE=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -M laps --laps-v2 2>/dev/null | grep -v "No result found" | grep -c "Password:")
+    if [ "$LAPS_V2_READABLE" -gt 0 ]; then
+      echo -e "${RED}[KO] LAPSv2 deployed - passwords readable by current user${NC}"
+    else
+      echo -e "${GREEN}[OK] LAPSv2 deployed - passwords not readable by current user${NC}"
+    fi
+  fi
 fi
 
 # Password policy
