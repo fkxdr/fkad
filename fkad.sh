@@ -1074,7 +1074,6 @@ else
 fi
 
 # SMB Share Enumeration
-echo -e "${GREY}[*] Enumerating SMB shares on ${SUBNET}.0/24...${NC}"
 nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --shares 2>/dev/null \
   | grep -E "READ|WRITE" > "$OUTPUT_DIR/smb_shares.txt"
 
@@ -1085,6 +1084,38 @@ if [ "$READABLE" -gt 0 ]; then
 else
   echo -e "${GREEN}[OK] No readable/writable shares found on ${SUBNET}.0/24${NC}"
   echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --shares'${NC}"
+fi
+
+# Manspider against readable SMB Shares
+if [ "$BH_MODE" != "DCOnly" ]; then
+  if [ -f "$OUTPUT_DIR/smb_shares.txt" ] && [ "$READABLE" -gt 0 ]; then
+    if [ -x "/root/.local/bin/manspider" ]; then
+      MANSPIDER_CMD="/root/.local/bin/manspider"
+    elif command -v manspider &>/dev/null; then
+      MANSPIDER_CMD="manspider"
+    else
+      MANSPIDER_CMD=""
+    fi
+
+    if [ ! -z "$MANSPIDER_CMD" ]; then
+      SHARE_HOSTS=$(grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$OUTPUT_DIR/smb_shares.txt" | sort -u | head -5)
+      mkdir -p "$OUTPUT_DIR/manspider"
+      echo "$SHARE_HOSTS" | while read -r share_host; do
+        timeout 120 $MANSPIDER_CMD "$share_host" -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" \
+          -c password passwd secret credential token apikey \
+          -e txt xml ini config conf csv bat ps1 \
+          --output-dir "$OUTPUT_DIR/manspider" &>/dev/null
+      done
+      SPIDER_COUNT=$(find "$OUTPUT_DIR/manspider" -type f 2>/dev/null | wc -l)
+      if [ "$SPIDER_COUNT" -gt 0 ]; then
+        echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/${NC}"
+      else
+        echo -e "${GREEN}[OK] Manspider found no sensitive content on readable shares${NC}"
+      fi
+    else
+      echo -e "${GREY}[--] Manspider not found, skipping secret scan${NC}"
+    fi
+  fi
 fi
 
 echo ""
