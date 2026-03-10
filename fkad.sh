@@ -1138,6 +1138,7 @@ if [ "$NFS_COUNT" -gt 0 ]; then
     done
   else
     echo -e "${GREEN}[OK] No accessible NFS shares found on ${SUBNET}.0/24${NC}"
+    rm -f "$OUTPUT_DIR/nfs_shares.txt"
   fi
 else
   echo -e "${GREEN}[OK] No NFS hosts found on ${SUBNET}.0/24${NC}"
