@@ -1028,7 +1028,7 @@ else
   fi
 fi
 
-# Web Screenshots
+# GoWitness
 echo ""
 echo -e "${GREY}[*] Running GoWitness...${NC}"
 mkdir -p "$OUTPUT_DIR/screenshots"
@@ -1038,12 +1038,53 @@ if [ "$HTTP_COUNT" -gt 0 ] && command -v gowitness &>/dev/null; then
   gowitness scan file -f "$OUTPUT_DIR/http_targets.txt" --screenshot-path "$OUTPUT_DIR/screenshots/" &>/dev/null
   SHOT_COUNT=$(ls "$OUTPUT_DIR/screenshots/"*.png 2>/dev/null | wc -l)
   echo -e "${GREEN}[OK] GoWitness captured $SHOT_COUNT screenshot(s) → screenshots/${NC}"
-  echo -e "${GREY}       └─ Add more subnets: nmap -p80,443,8080,8443 <SUBNET>/24 --open -oG - | awk '/open/{print \$2}' >> '$OUTPUT_DIR/http_targets.txt'${NC}"
-  echo -e "${GREY}          gowitness scan file -f '$OUTPUT_DIR/http_targets.txt' --screenshot-path '$OUTPUT_DIR/screenshots/'${NC}"
 elif ! command -v gowitness &>/dev/null; then
   echo -e "${GREY}[--] GoWitness not found, skipping screenshots${NC}"
 else
   echo -e "${GREY}[--] No web hosts found on ${SUBNET}.0/24${NC}"
+fi
+
+# NFS Share Enumeration
+NFS_HOSTS=$(nmap -Pn -p 2049 --open ${SUBNET}.0/24 -oG - 2>/dev/null | awk '/open/{print $2}')
+NFS_COUNT=$(echo "$NFS_HOSTS" | grep -c . 2>/dev/null || echo 0)
+if [ "$NFS_COUNT" -gt 0 ]; then
+  > "$OUTPUT_DIR/nfs_shares.txt"
+  echo "$NFS_HOSTS" | while read -r nfs_ip; do
+    mounts=$(showmount -e "$nfs_ip" 2>/dev/null)
+    if [ ! -z "$mounts" ]; then
+      echo "=== $nfs_ip ===" >> "$OUTPUT_DIR/nfs_shares.txt"
+      echo "$mounts" >> "$OUTPUT_DIR/nfs_shares.txt"
+    fi
+  done
+  NFS_WRITTEN=$(wc -l < "$OUTPUT_DIR/nfs_shares.txt" 2>/dev/null || echo 0)
+  if [ "$NFS_WRITTEN" -gt 0 ]; then
+    echo -e "${RED}[KO] NFS shares found → nfs_shares.txt${NC}"
+    grep "===" "$OUTPUT_DIR/nfs_shares.txt" | sed 's/=== //;s/ ===//' | while read -r nfs_ip; do
+      if grep -A5 "=== $nfs_ip ===" "$OUTPUT_DIR/nfs_shares.txt" | grep -q '\*'; then
+        echo -e "${RED}       └─ $nfs_ip: world-accessible mount${NC}"
+      else
+        echo -e "${GREY}       └─ $nfs_ip: restricted mounts${NC}"
+      fi
+    done
+  else
+    echo -e "${GREEN}[OK] No accessible NFS shares found on ${SUBNET}.0/24${NC}"
+  fi
+else
+  echo -e "${GREEN}[OK] No NFS hosts found on ${SUBNET}.0/24${NC}"
+fi
+
+# SMB Share Enumeration
+echo -e "${GREY}[*] Enumerating SMB shares on ${SUBNET}.0/24...${NC}"
+nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --shares 2>/dev/null \
+  | grep -E "READ|WRITE" > "$OUTPUT_DIR/smb_shares.txt"
+
+READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" 2>/dev/null || echo 0)
+if [ "$READABLE" -gt 0 ]; then
+  echo -e "${RED}[KO] $READABLE readable/writable share(s) found → smb_shares.txt${NC}"
+  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --shares'${NC}"
+else
+  echo -e "${GREEN}[OK] No readable/writable shares found on ${SUBNET}.0/24${NC}"
+  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --shares'${NC}"
 fi
 
 echo ""
