@@ -884,8 +884,10 @@ try {
 
 # ScriptSentry
 try {
-    $cmd = "IEX (Invoke-WebRequest 'https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1').Content; Invoke-ScriptSentry *>&1 | Out-File '$OUT\scriptsentry.txt' -Encoding utf8"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1" -OutFile "$env:TEMP\ScriptSentry.ps1" -UseBasicParsing -ErrorAction Stop
+    . "$env:TEMP\ScriptSentry.ps1"
+    $ssOutput = Invoke-ScriptSentry -ErrorAction SilentlyContinue 2>&1
+    $ssOutput | Where-Object { $_ -notmatch "GetCurrentForest|0x80005000|FindOne|Unknown error" } | Out-File "$OUT\scriptsentry.txt" -Encoding utf8
     Write-Host "[ OK ]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
 } catch {
     Write-Host "[ -- ]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
@@ -919,7 +921,29 @@ try {
     Write-Host "[ -- ]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
 }
 
-Write-Host ""
+# Agent Ransack in additional window
+$arCmd = @"
+`$host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(80, 25)
+`$host.UI.RawUI.WindowTitle = 'Agent Ransack Installation'
+Write-Host 'Agent Ransack is being downloaded...' -ForegroundColor White
+Invoke-WebRequest -Uri 'https://download.mythicsoft.com/flp/3555/wzn-fyf5-HDG-mgW/agentransack_inx64_3555.exe' -OutFile '$env:TEMP\ar.exe' -UseBasicParsing
+Write-Host 'Agent Ransack was downloaded, starting installer...' -ForegroundColor White
+Write-Host ''
+Write-Host 'Filename filter:' -ForegroundColor DarkGray
+Write-Host '*.bat;*.cmd;*.config;*.db;*.doc*;*.ini;*.json;*.kdb;*.kdbx;*.log;*.mgs;*.ora;*.php;*.prod;*.ps1;*.pst;*.reg*;*.sql;*.test;*.txt;*.vb;*.vhdx;*.vnc;*.xls*;*.xml;*.yml;*_db.txt;AccessTokens.json;Kennwort*.txt;key3.db;key4.db;logins.json;ntds.dit;password*.txt;passwort*.txt;TokenCache.dat;*.bak;*.ps*;*.conf;*.msg;*.toml' -ForegroundColor DarkGray
+Write-Host ''
+Write-Host 'Content filter:' -ForegroundColor DarkGray
+Write-Host 'passwort= OR password= OR user= OR benutzername= OR benutzer= OR passwort: OR password: OR benutzername: OR password< OR passwort< OR user: OR benutzer: OR kennwort: OR password" OR passwort" OR "password =" OR "passwort =" OR pass: OR anmeldename OR -password OR -passwort OR connectstring= OR -p= OR $password OR $credential OR password} OR passwort} OR passwd OR /password: OR /passwort: OR pwd= OR pwd_ OR password' OR passwort' OR username: OR strpass' -ForegroundColor DarkGray
+Write-Host ''
+Start-Process '$env:TEMP\ar.exe' -Wait
+Write-Host ''
+Write-Host 'Press any key to close...' -ForegroundColor DarkGray
+`$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+"@
+Start-Process powershell -ArgumentList "-NoProfile -Command `"$arCmd`""
+Write-Host "[ OK ]   Agent Ransack setup started (manual steps required, see other terminal window)" -ForegroundColor Green
+
+
 Write-Host "Done. Output folder: $OUT" -ForegroundColor DarkGray
 $lines = @(
     '||||||A red haze shatters the screen violently, its security slipping into darkness.||||||',
