@@ -351,10 +351,8 @@ fi
 
 # SMB Signing Check on all DCs
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
-  
   VULN_SMB_DCS=""
-  VULN_SMB_COUNT=0
-  
+  VULN_SMB_COUNT=0  
   while IFS=: read -r hostname ip; do
     smb_check=$(timeout 10 netexec smb $ip -u "$AD_USER" -p "$PASSWORD" --timeout 5 2>&1 | grep -oP 'signing:(True|False)')
     signing=$(echo "$smb_check" | grep -oP 'signing:\K\w+')
@@ -363,8 +361,7 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       VULN_SMB_COUNT=$((VULN_SMB_COUNT + 1))
       VULN_SMB_DCS="${VULN_SMB_DCS}${RED}       └─ ${hostname} (${ip})${NC}\n"
     fi
-  done < "$OUTPUT_DIR/all_dcs.txt"
-  
+  done < "$OUTPUT_DIR/all_dcs.txt"  
   if [ $VULN_SMB_COUNT -gt 0 ]; then
     if [ $VULN_SMB_COUNT -eq $DC_COUNT ]; then
       echo -e "${RED}[KO] All $DC_COUNT DCs: SMB Signing NOT required${NC}"
@@ -375,7 +372,6 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     
     # Extract first vulnerable DC IP
     FIRST_VULN_SMB_DC_IP=$(echo -e "$VULN_SMB_DCS" | head -1 | grep -oP '\d+\.\d+\.\d+\.\d+')
-    
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
@@ -415,8 +411,6 @@ else
     echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/ADMINISTRATOR\$@${DC_IP}'${NC}"
   fi
 fi
-
-echo ""
 
 # Unconstrained Delegation Check (uses DC_SAMNAMES cached from initial DC enumeration)
 UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
@@ -514,6 +508,8 @@ else
   echo -e "${GREEN}[OK] No ms-DS-CreatorSID entries found${NC}"
 fi
 
+echo ""
+
 # Coerce Methods (replaces separate Print Spooler + PetitPotam checks)
 COERCE_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M coerce_plus 2>/dev/null)
 COERCE_METHODS=$(echo "$COERCE_OUTPUT" | grep "VULNERABLE," | grep -oP 'VULNERABLE, \K.*' | sort -u | tr '\n' ', ' | sed 's/,$//')
@@ -571,6 +567,26 @@ if [ -z "$IPV6_ENABLED" ]; then
   echo -e "${RED}[KO] No IPv6 DNS record for DC (DHCPv6 DNS Takeover via mitm6)${NC}"
 else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC${NC}"
+fi
+
+# ADIDNS Poisoning Check
+ADIDNS_OUTPUT=$(dacledit.py -action read -target-dn "DC=$DOMAIN,CN=MicrosoftDNS,DC=DomainDnsZones,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
+ADIDNS_CREATECHILD=$(echo "$ADIDNS_OUTPUT" | awk '
+  /Access mask.*CreateChild/ { found=1; next }
+  found && /Trustee/ {
+    if ($0 !~ /Domain Admins|Enterprise Admins|Administrators|Local System|DnsAdmins|Enterprise Domain Controllers/) {
+      sub(/.*Trustee \(SID\)\s*:\s*/, ""); print
+    }
+    found=0
+  }
+' | sort -u)
+if [ ! -z "$ADIDNS_CREATECHILD" ]; then
+  ADIDNS_TRUSTEES=$(echo "$ADIDNS_CREATECHILD" | tr '\n' ',' | sed 's/,$//')
+  echo -e "${RED}[KO] ADIDNS poisoning possible with $ADIDNS_TRUSTEES → adidns.txt${NC}"
+  echo "$ADIDNS_CREATECHILD" > "$OUTPUT_DIR/adidns.txt"
+  echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
+else
+  echo -e "${GREEN}[OK] ADIDNS zone write access is restricted${NC}"
 fi
 
 echo ""
@@ -638,6 +654,12 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
   cd "$OUTPUT_DIR/bloodhound"
   $BH_CMD -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE &>/dev/null
+  
+  # Fallback with DNS TCP if no JSONs produced
+  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | wc -l)
+  if [ "$BH_JSON" -eq 0 ]; then
+    $BH_CMD -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE --dns-timeout 30 --dns-tcp &>/dev/null
+  fi
   cd "$CURRENT_PATH"
   
   # Check for BloodHound JSONs
@@ -804,6 +826,24 @@ if echo "$PRE2K_OUTPUT" | grep -q "Found.*pre-created computer accounts"; then
   echo "$PRE2K_OUTPUT" | grep "Pre-created computer account\|Found.*pre-created" > "$OUTPUT_DIR/pre2k.txt"
 else
   echo -e "${GREEN}[OK] No Pre-Windows 2000 computer accounts found${NC}"
+fi
+
+# Pre-Windows 2000 Compatible Access Group
+PRE2K_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(cn=Pre-Windows 2000 Compatible Access)" member 2>/dev/null)
+PRE2K_MEMBERS=$(echo "$PRE2K_OUTPUT" | grep "^member:" | awk '{print $2}')
+PRE2K_EVERYONE=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-1-0")
+PRE2K_ANON=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-7")
+PRE2K_AUTHUSERS=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-11")
+if [ "$PRE2K_EVERYONE" -gt 0 ] || [ "$PRE2K_ANON" -gt 0 ]; then
+  echo -e "${RED}[KO] Pre-Windows 2000 Compatible Access contains Everyone/Anonymous → unauthenticated SAMR enumeration possible → pre2k_group.txt${NC}"
+  [ "$PRE2K_EVERYONE" -gt 0 ] && echo -e "${RED}       └─ Everyone (S-1-1-0)${NC}"
+  [ "$PRE2K_ANON" -gt 0 ] && echo -e "${RED}       └─ Anonymous Logon (S-1-5-7)${NC}"
+  echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
+elif [ "$PRE2K_AUTHUSERS" -gt 0 ]; then
+  echo -e "${RED}[KO] Pre-Windows 2000 Compatible Access contains Authenticated Users→ pre2k_group.txt${NC}"
+  echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
+else
+  echo -e "${GREEN}[OK] Pre-Windows 2000 Compatible Access group is clean${NC}"
 fi
 
 echo ""
@@ -1024,6 +1064,77 @@ else
   echo -e "${GREEN}[OK] No users with DES-only Kerberos encryption${NC}"
 fi
 
+# AdminSDHolder ACL
+if command -v dacledit.py &>/dev/null; then
+  ADMINSDHOLDER_OUTPUT=$(dacledit.py -action read -target-dn "CN=AdminSDHolder,CN=System,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
+  RISKY_ACES=$(echo "$ADMINSDHOLDER_OUTPUT" | awk '
+    /ACE\[/ { trustee=""; mask=""; }
+    /Access mask/ { match($0, /0x[0-9a-fA-F]+/); mask=substr($0,RSTART,RLENGTH) }
+    /Trustee \(SID\)/ {
+      sub(/.*Trustee \(SID\)\s*:\s*/, ""); trustee=$0
+      if (mask != "" && trustee != "") {
+        cmd = "printf \"%d\" " mask
+        cmd | getline maskval
+        close(cmd)
+        if ((maskval+0) >= 262144) {
+          if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|Local System|Cert Publishers|Pre-Windows 2000|Terminal Server|Windows Authorization|Principal Self|Everyone|Authenticated Users/) {
+            print trustee
+          }
+        }
+      }
+    }
+  ' | sort -u)
+  if [ ! -z "$RISKY_ACES" ]; then
+    RISKY_COUNT=$(echo "$RISKY_ACES" | wc -l)
+    echo -e "${RED}[KO] AdminSDHolder: $RISKY_COUNT unexpected Write ACE(s) → SDProp persistence risk${NC}"
+    echo "$RISKY_ACES" | while read -r trustee; do
+      echo -e "${RED}       └─ $trustee${NC}"
+    done
+    echo -e "${GREY}       └─ SDProp propagates these ACEs every 60min to all Protected Users${NC}"
+    echo -e "${GREY}          dacledit.py -action read -target-dn 'CN=AdminSDHolder,CN=System,$DOMAIN_DN' -dc-ip $DC_IP '$FULL_USER:$PASSWORD'${NC}"
+  else
+    echo -e "${GREEN}[OK] AdminSDHolder ACLs are clean${NC}"
+  fi
+else
+  echo -e "${GREY}[--] dacledit.py not found, skipping AdminSDHolder check${NC}"
+fi
+
+# SID History
+SID_HISTORY_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(sIDHistory=*)" sAMAccountName sIDHistory 2>/dev/null)
+SID_HISTORY_ACCOUNTS=$(echo "$SID_HISTORY_OUTPUT" | grep "^sAMAccountName:" | awk '{print $2}')
+SID_HISTORY_COUNT=$(echo "$SID_HISTORY_ACCOUNTS" | grep -v "^$" | wc -l)
+if [ "$SID_HISTORY_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $SID_HISTORY_COUNT account(s) with sIDHistory found → sid_history.txt${NC}"
+  echo "$SID_HISTORY_OUTPUT" | grep -E "^(sAMAccountName|sIDHistory):" > "$OUTPUT_DIR/sid_history.txt"
+  echo "$SID_HISTORY_ACCOUNTS" | while read -r account; do
+    [ -z "$account" ] && continue
+    SIDS=$(echo "$SID_HISTORY_OUTPUT" | grep -A5 "sAMAccountName: $account" | grep "^sIDHistory:" | awk '{print $2}')
+    echo -e "${RED}       └─ $account${NC}"
+    echo "$SIDS" | while read -r sid; do
+      echo -e "${GREY}          └─ $sid${NC}"
+    done
+  done
+  echo -e "${GREY}       └─ Verify if SIDs map to privileged groups: bloohound or lookupsid.py $FULL_USER:$PASSWORD@$DC_IP${NC}"
+else
+  echo -e "${GREEN}[OK] No accounts with sIDHistory found${NC}"
+fi
+
+# Shadow Credentials Check
+SHADOW_CREDS_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(msDS-KeyCredentialLink=*)" sAMAccountName msDS-KeyCredentialLink 2>/dev/null)
+SHADOW_CREDS_ACCOUNTS=$(echo "$SHADOW_CREDS_OUTPUT" | grep "^sAMAccountName:" | awk '{print $2}')
+SHADOW_CREDS_COUNT=$(echo "$SHADOW_CREDS_ACCOUNTS" | grep -v "^$" | wc -l)
+if [ "$SHADOW_CREDS_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $SHADOW_CREDS_COUNT account(s) with Shadow Credentials (msDS-KeyCredentialLink) found → shadow_creds.txt${NC}"
+  echo "$SHADOW_CREDS_OUTPUT" | grep -E "^(sAMAccountName|msDS-KeyCredentialLink):" > "$OUTPUT_DIR/shadow_creds.txt"
+  echo "$SHADOW_CREDS_ACCOUNTS" | while read -r account; do
+    [ -z "$account" ] && continue
+    echo -e "${RED}       └─ $account${NC}"
+  done
+  echo -e "${GREY}       └─ pywhisker.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target <account> --action list${NC}"
+else
+  echo -e "${GREEN}[OK] No Shadow Credentials found${NC}"
+fi
+
 # GPP Passwords (SYSVOL)
 GPP_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --share=SYSVOL -M gpp_password 2>/dev/null)
 if echo "$GPP_OUTPUT" | grep -q "Found credentials in"; then
@@ -1036,12 +1147,8 @@ fi
 echo ""
 
 # Domain Trusts + SID Filtering Check
-TRUST_DATA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "CN=System,$DOMAIN_DN" \
-  "(objectClass=trustedDomain)" cn trustDirection trustAttributes 2>/dev/null)
-
+TRUST_DATA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "CN=System,$DOMAIN_DN" "(objectClass=trustedDomain)" cn trustDirection trustAttributes 2>/dev/null)
 TRUST_COUNT=$(echo "$TRUST_DATA" | grep -c "^cn:")
-
 if [ "$TRUST_COUNT" -gt 0 ]; then
   echo -e "${GREY}[--] $TRUST_COUNT Domain Trust(s) found${NC}"
   
@@ -1075,6 +1182,27 @@ echo "$TRUST_DATA" | awk '
   done
 else
   echo -e "${GREEN}[OK] No Domain Trusts found${NC}"
+fi
+
+# Foreign Security Principals Check
+FSP_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "CN=ForeignSecurityPrincipals,$DOMAIN_DN" "(objectClass=foreignSecurityPrincipal)" cn memberOf 2>/dev/null)
+FSP_HITS=$(echo "$FSP_OUTPUT" | awk '
+  /^cn:/ { cn=$2 }
+  /^memberOf:/ {
+    if (cn ~ /^S-1-5-21-/) {
+      print cn " → " $0
+    }
+  }
+' | sort -u)
+if [ ! -z "$FSP_HITS" ]; then
+  FSP_COUNT=$(echo "$FSP_HITS" | wc -l)
+  echo -e "${RED}[KO] $FSP_COUNT Foreign Security Principal(s) from trusted domains in groups → fsp.txt${NC}"
+  echo "$FSP_HITS" | while read -r line; do
+    echo -e "${RED}       └─ $line${NC}"
+  done
+  echo "$FSP_HITS" > "$OUTPUT_DIR/fsp.txt"
+else
+  echo -e "${GREEN}[OK] No Foreign Security Principals${NC}"
 fi
 
 # Email Security (SPF/DMARC)
@@ -1186,6 +1314,22 @@ if [ "$BH_MODE" != "DCOnly" ]; then
       rm -rf "$OUTPUT_DIR/manspider"
     fi
   fi
+fi
+
+# MSSQL Discovery
+MSSQL_HOSTS=$(nxc mssql ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" 2>/dev/null | grep "\[+\]" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+MSSQL_COUNT=$(echo "$MSSQL_HOSTS" | grep -v "^$" | wc -l)
+if [ "$MSSQL_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $MSSQL_COUNT MSSQL instance(s) found → checking privileges${NC}"
+  echo "$MSSQL_HOSTS" | while read -r mssql_host; do
+    [ -z "$mssql_host" ] && continue
+    echo -e "${GREY}       └─ $mssql_host${NC}"
+    nxc mssql $mssql_host -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M mssql_priv 2>/dev/null | grep -E "xp_cmdshell|impersonation|linked|db_owner" | while read -r priv; do
+      echo -e "${RED}          └─ $priv${NC}"
+    done
+  done
+else
+  echo -e "${GREEN}[OK] No accessible MSSQL instances found on ${SUBNET}.0/24${NC}"
 fi
 
 echo ""
