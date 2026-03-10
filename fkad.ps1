@@ -90,8 +90,6 @@ if ($languageMode -eq "FullLanguage") {
 
 Write-Host ""
 
-Run "System Info" { systeminfo } "systeminfo.txt"
-
 # Privs whoami /all
 $privMap = @{
     "SeDebugPrivilege"           = "Read LSASS / inject into any process"
@@ -113,6 +111,9 @@ foreach ($priv in $privMap.Keys) {
         Write-Host "          - [P110]   $priv`: $($privMap[$priv])" -ForegroundColor DarkRed
     }
 }
+
+Run "System Info" { systeminfo } "systeminfo.txt"
+Write-Host "          - https://github.com/bitsadmin/wesng for common vulns: wes.py systeminfo.txt " -ForegroundColor DarkGray
 
 Write-Host ""
 
