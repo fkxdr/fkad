@@ -582,8 +582,7 @@ ADIDNS_CREATECHILD=$(echo "$ADIDNS_OUTPUT" | awk '
 ' | sort -u)
 if [ ! -z "$ADIDNS_CREATECHILD" ]; then
   ADIDNS_TRUSTEES=$(echo "$ADIDNS_CREATECHILD" | tr '\n' ',' | sed 's/,$//')
-  echo -e "${RED}[KO] ADIDNS poisoning possible with $ADIDNS_TRUSTEES → adidns.txt${NC}"
-  echo "$ADIDNS_CREATECHILD" > "$OUTPUT_DIR/adidns.txt"
+  echo -e "${RED}[KO] ADIDNS poisoning possible with $ADIDNS_TRUSTEES${NC}"
   echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
 else
   echo -e "${GREEN}[OK] ADIDNS zone write access is restricted${NC}"
