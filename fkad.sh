@@ -785,6 +785,7 @@ MAQ=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
 if [ ! -z "$MAQ" ]; then
   if [ "$MAQ" -gt 0 ]; then
     echo -e "${RED}[KO] MachineAccountQuota: $MAQ (Users can create computer objects)${NC}"
+    echo -e "${GREY}       └─ addcomputer.py -computer-name 'AAAAAAA\$' -computer-pass 'Ilovefkad1337?' '$DOMAIN/$AD_USER:$PASSWORD' -dc-ip $DC_IP${NC}"
   else
     echo -e "${GREEN}[OK] MachineAccountQuota: 0 (Computer creation restricted)${NC}"
   fi
@@ -834,15 +835,15 @@ PRE2K_EVERYONE=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-1-0")
 PRE2K_ANON=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-7")
 PRE2K_AUTHUSERS=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-11")
 if [ "$PRE2K_EVERYONE" -gt 0 ] || [ "$PRE2K_ANON" -gt 0 ]; then
-  echo -e "${RED}[KO] Pre-Windows 2000 Compatible Access contains Everyone/Anonymous → unauthenticated SAMR enumeration possible → pre2k_group.txt${NC}"
+  echo -e "${RED}[KO] Pre-Windows 2000 compatible access contains Everyone/Anonymous → unauthenticated SAMR enumeration possible → pre2k_group.txt${NC}"
   [ "$PRE2K_EVERYONE" -gt 0 ] && echo -e "${RED}       └─ Everyone (S-1-1-0)${NC}"
   [ "$PRE2K_ANON" -gt 0 ] && echo -e "${RED}       └─ Anonymous Logon (S-1-5-7)${NC}"
   echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
 elif [ "$PRE2K_AUTHUSERS" -gt 0 ]; then
-  echo -e "${RED}[KO] Pre-Windows 2000 Compatible Access contains Authenticated Users→ pre2k_group.txt${NC}"
+  echo -e "${RED}[KO] Pre-Windows 2000 compatible access contains Authenticated Users→ pre2k_group.txt${NC}"
   echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
 else
-  echo -e "${GREEN}[OK] Pre-Windows 2000 Compatible Access group is clean${NC}"
+  echo -e "${GREEN}[OK] Pre-Windows 2000 compatible access group is clean${NC}"
 fi
 
 echo ""
