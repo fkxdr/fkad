@@ -1168,13 +1168,15 @@ if [ "$BH_MODE" != "DCOnly" ]; then
     if [ ! -z "$MANSPIDER_CMD" ]; then
       SHARE_HOSTS=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$OUTPUT_DIR/smb_shares.txt" | sort -u | head -5)
       mkdir -p "$OUTPUT_DIR/manspider"
-      > "$OUTPUT_DIR/manspider/results.txt"
+      mkdir -p "$OUTPUT_DIR/manspider/loot"
+      > "$OUTPUT_DIR/manspider/manspider.txt"
       echo "$SHARE_HOSTS" | while read -r share_host; do
-        timeout 120 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c password passwd secret credential token apikey username connectionstring pwd -e txt xml ini config conf csv bat ps1 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/results.txt"
+        timeout 60 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c password passwd secret credential token apikey username connectionstring pwd -e txt xml ini config conf csv bat ps1 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
+        cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       done
-      SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/results.txt" 2>/dev/null || echo 0)
+      SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" 2>/dev/null || echo 0)
       if [ "$SPIDER_COUNT" -gt 0 ]; then
-        echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/results.txt${NC}"
+        echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/manspider.txt${NC}"
       else
         echo -e "${GREEN}[OK] Manspider found no sensitive content on readable shares${NC}"
         rm -rf "$OUTPUT_DIR/manspider"
