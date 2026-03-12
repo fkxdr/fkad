@@ -744,7 +744,6 @@ $paths = @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
 )
-
 $msiOutput = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {
     $_.DisplayName -and
     $_.WindowsInstaller -eq 1 -and
@@ -752,18 +751,54 @@ $msiOutput = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Objec
         "Microsoft Corporation",
         "Microsoft",
         "Python Software Foundation",
-        "Parallels International GmbH"
+        "Parallels International GmbH",
+        "Adobe Systems Incorporated",
+        "Adobe Inc."
     )
 } | Select-Object DisplayName, Publisher, DisplayVersion, PSChildName
-
 if ($msiOutput) {
-    $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
+    $report = @()
+    $icaclsCache = @{}
+    Get-ChildItem "C:\Windows\Installer\*.msi" -ErrorAction SilentlyContinue | ForEach-Object {
+        $icaclsCache[$_.Name] = icacls $_.FullName 2>$null
+    }
+    $i = 1
+    foreach ($product in $msiOutput) {
+        $guid = $product.PSChildName
+        $guidClean = $guid -replace '[{}-]', ''
+        $sourceKey = "HKLM:\SOFTWARE\Classes\Installer\Products\$guidClean\SourceList\Net"
+        $sourcePaths = Get-ItemProperty $sourceKey -ErrorAction SilentlyContinue
+        $report += ""
+        $report += "[$i] $($product.DisplayName)"
+        $report += "    ProductCode : $guid"
+        $report += "    Publisher   : $($product.Publisher)"
+        $report += "    Version     : $($product.DisplayVersion)"
+        $report += ""
+        $report += "    ICACLS C:\Windows\Installer (MSI-Cache):"
+        foreach ($entry in $icaclsCache.GetEnumerator()) {
+            $report += "      $($entry.Key):"
+            $entry.Value | ForEach-Object { $report += "        $_" }
+        }
+        $report += ""
+        $report += "    SourceList:"
+        if ($sourcePaths) {
+            $sourcePaths.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object {
+                $report += "      $($_.Name): $($_.Value)"
+            }
+        } else {
+            $report += "      (not found)"
+        }
+        $report += "------------------------------------"
+        $i++
+    }
+    $report | Out-File "$OUT\msi_list.txt" -Encoding utf8
     Write-Host "[P160]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
     Write-Host '             - msiexec /fa "{PSChildName from msi_list.txt}"' -ForegroundColor DarkGray
     Write-Host "             - https://learn.microsoft.com/en-us/sysinternals/downloads/procmon" -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
+
 Write-Host ""
 
 # RDP connections
