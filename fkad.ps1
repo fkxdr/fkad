@@ -740,24 +740,29 @@ try {
 }
 
 # MSI repairing
-$msiOutput = Get-WmiObject -Class Win32_Product |
-    Where-Object { $_.Vendor -notin @("Microsoft Corporation","Microsoft","Python Software Foundation","Parallels International GmbH") } |
-    ForEach-Object {
-        [PSCustomObject]@{
-            Name = $_.Name
-            Vendor = $_.Vendor
-            Version = $_.Version
-        }
-    }
+$paths = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+
+$msiOutput = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {
+    $_.DisplayName -and
+    $_.WindowsInstaller -eq 1 -and
+    $_.Publisher -notin @(
+        "Microsoft Corporation",
+        "Microsoft",
+        "Python Software Foundation",
+        "Parallels International GmbH"
+    )
+} | Select-Object DisplayName, Publisher, DisplayVersion, PSChildName
+
 if ($msiOutput) {
     $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
     Write-Host "[P160]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
-    Write-Host '             - Get-WmiObject -Class Win32_Product | Where-Object { $_.Name -like "*Target*" } | Select Name, IdentifyingNumber' -ForegroundColor DarkGray
-    Write-Host '             - msiexec /fa "{IdentifyingNumber}"' -ForegroundColor DarkGray
+    Write-Host '             - msiexec /fa "{PSChildName from msi_list.txt}"' -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
-
 Write-Host ""
 
 # RDP connections
