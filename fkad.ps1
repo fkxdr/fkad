@@ -484,7 +484,7 @@ try {
 }
 
 # GPO ACL Check (AD level)
-$nonAdminExclusions = @("Domain Admins", "Enterprise Admins", "SYSTEM", "Administrators")
+$nonAdminExclusions = @("Admins", "SYSTEM", "Administrators", "ERSTELLER-BESITZER", "Creator Owner")
 try {
     $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
     $DN = "DC=" + ($domain.Name -replace "\.", ",DC=")
@@ -548,7 +548,7 @@ try {
       Write-Host "[ OK ]   No non-admin SYSVOL write permissions found" -ForegroundColor Green
     }
   } else {
-    Write-Host "[ -- ]   SYSVOL path not accessible" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   SYSVOL path not accessible, user is not domain admin" -ForegroundColor DarkGrey
   }
 } catch {
   Write-Host "[ -- ]   SYSVOL ACL check failed: $_" -ForegroundColor DarkYellow
@@ -589,7 +589,7 @@ try {
         }
     }
 } catch {
-    Write-Host "[ -- ]   Tombstone check failed, is the device AD joined?" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   Tombstone check failed, user is probably not Domain Admin" -ForegroundColor DarkGray
 }
 
 # MSSQL Enumeration
