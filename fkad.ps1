@@ -746,7 +746,9 @@ $paths = @(
 )
 $excludedVendors = @(
     "Python Software Foundation",
-    "Parallels International GmbH"
+    "Parallels International GmbH",
+    "HP",
+    "Hewlett-Packard"
 )
 $installer = New-Object -ComObject WindowsInstaller.Installer
 $msis = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {
