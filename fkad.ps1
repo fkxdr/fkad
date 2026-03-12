@@ -308,10 +308,8 @@ if ($isAdmin) {
             }
         }
         if ($foundExclusions.Count -gt 0) {
-            Write-Host "          - [P075] Exclusions detected via event logs" -ForegroundColor DarkRed
-            foreach ($path in $foundExclusions) {
-                Write-Host "          $path" -ForegroundColor DarkGray
-            }
+            $foundExclusions | Out-File "$OUT\defender_exclusions.txt" -Encoding utf8
+            Write-Host "          - [P075] Exclusions detected via event logs -> defender_exclusions.txt" -ForegroundColor DarkRed
         } else {
             Write-Host "          - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
         }
@@ -513,7 +511,7 @@ try {
             Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Rights))" -ForegroundColor DarkRed
         }
     } else {
-        Write-Host "[ OK ]   No non-admin GPO write permissions found" -ForegroundColor Green
+        Write-Host "[ OK ]   no non-admin GPO write permissions found" -ForegroundColor Green
     }
 } catch {
     Write-Host "[ -- ]   GPO ACL check failed: $_" -ForegroundColor DarkYellow
@@ -637,7 +635,8 @@ if ($instances) {
 Write-Host ""
 
 # Admins and logged on users
-$adminRaw = net localgroup administrators
+$adminRaw = net localgroup administrators 2>$null
+if (-not $adminRaw) { $adminRaw = net localgroup administratoren 2>$null }
 $adminMembers = $adminRaw | Select-Object -Skip 6 | Where-Object {
     $_ -notmatch "^-+$" -and
     $_ -notmatch "The command completed" -and
