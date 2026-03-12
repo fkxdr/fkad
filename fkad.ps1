@@ -310,7 +310,7 @@ if ($isAdmin) {
         if ($foundExclusions.Count -gt 0) {
             Write-Host "          - [P075] Exclusions detected via event logs" -ForegroundColor DarkRed
             foreach ($path in $foundExclusions) {
-                Write-Host "                   - $path" -ForegroundColor DarkGray
+                Write-Host "          - $path" -ForegroundColor DarkGray
             }
         } else {
             Write-Host "          - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
@@ -484,24 +484,40 @@ try {
 }
 
 # GPO ACL Check (AD level)
-$dangerousPerms = @("GpoEditDeleteModifySecurity", "GpoEdit", "GpoApply")
 $nonAdminExclusions = @("Domain Admins", "Enterprise Admins", "SYSTEM", "Administrators")
-
 try {
-  $GPOs = Get-GPO -All -ErrorAction Stop
-  $gpoFindings = @()
-
-  foreach ($GPO in $GPOs) {
-    $ACL = Get-GPPermission -Guid $GPO.Id -All -ErrorAction SilentlyContinue
-    foreach ($ACE in $ACL) {
-      $trustee = $ACE.Trustee.Name
-      $perm = $ACE.Permission.ToString()
-      $isAdmin = $nonAdminExclusions | Where-Object { $trustee -match $_ }
-      if ($perm -match "GpoEdit" -and -not $isAdmin) {
-        $gpoFindings += [PSCustomObject]@{ GPO = $GPO.DisplayName; Trustee = $trustee; Permission = $perm }
-      }
+    $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+    $DN = "DC=" + ($domain.Name -replace "\.", ",DC=")
+    $entry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=Policies,CN=System,$DN")
+    $searcher = New-Object System.DirectoryServices.DirectorySearcher($entry)
+    $searcher.Filter = "(objectClass=groupPolicyContainer)"
+    $searcher.PropertiesToLoad.AddRange(@("displayName", "nTSecurityDescriptor", "cn"))
+    $searcher.SearchScope = "OneLevel"
+    $results = $searcher.FindAll()
+    $gpoFindings = @()
+    foreach ($result in $results) {
+        $gpoName = $result.Properties["displayName"][0]
+        $acl = $result.GetDirectoryEntry().ObjectSecurity
+        foreach ($ace in $acl.Access) {
+            $trustee = $ace.IdentityReference.ToString()
+            $rights = $ace.ActiveDirectoryRights.ToString()
+            $isAdmin = $nonAdminExclusions | Where-Object { $trustee -match $_ }
+            if ($rights -match "WriteProperty|WriteDacl|WriteOwner|GenericWrite|GenericAll" -and -not $isAdmin) {
+                $gpoFindings += [PSCustomObject]@{ GPO = $gpoName; Trustee = $trustee; Rights = $rights }
+            }
+        }
     }
-  }
+    if ($gpoFindings.Count -gt 0) {
+        Write-Host "[P120]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
+        foreach ($f in $gpoFindings) {
+            Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Rights))" -ForegroundColor DarkRed
+        }
+    } else {
+        Write-Host "[ OK ]   No non-admin GPO write permissions found" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[ -- ]   GPO ACL check failed: $_" -ForegroundColor DarkYellow
+}
 
   if ($gpoFindings.Count -gt 0) {
     Write-Host "[P120]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
@@ -703,7 +719,7 @@ foreach ($task in $allTasks) {
     }
 }
 if ($suspicious.Count -gt 0) {
-    $suspicious | Format-Table -AutoSize | Out-File "$OUT\scheduled_tasks.txt" -Encoding utf8
+    $suspicious | Out-File "$OUT\scheduled_tasks.txt" -Encoding utf8
     Write-Host "[P147]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
 } else {
     Write-Host "[ OK ]   No suspicious scheduled tasks found" -ForegroundColor Green
@@ -711,8 +727,7 @@ if ($suspicious.Count -gt 0) {
 
 # Startup items (filtered)
 $startupOutput = Get-CimInstance Win32_StartupCommand |
-    Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" } |
-    Format-Table -AutoSize
+    Where-Object { $_.Command -notmatch "SecurityHealthSystray|Windows Defender|MpCmdRun" }
 if ($startupOutput) {
     $startupOutput | Out-File "$OUT\startup_items.txt" -Encoding utf8
     Write-Host "[P150]   Startup items found -> startup_items.txt" -ForegroundColor DarkRed
@@ -846,8 +861,8 @@ if ($sorted) {
     }
     $report | Out-File "$OUT\msi_list.txt" -Encoding utf8
     Write-Host "[P160]   MSI repair might be LPE possible -> msi_list.txt" -ForegroundColor DarkRed
-    Write-Host '             - msiexec /fa "{GUID from msi_list.txt}"' -ForegroundColor DarkGray
-    Write-Host "             - https://learn.microsoft.com/en-us/sysinternals/downloads/procmon" -ForegroundColor DarkGray
+    Write-Host '          - msiexec /fa "{GUID from msi_list.txt}"' -ForegroundColor DarkGray
+    Write-Host "          - https://learn.microsoft.com/en-us/sysinternals/downloads/procmon" -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
@@ -1051,6 +1066,32 @@ if (-not $onlineToolsAvailable) {
     } catch {
         Write-Host "[ -- ]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
     }
+}
+
+# Agent Ransack in additional window
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   Agent Ransack skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    $arCmd = @"
+    `$host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(80, 25)
+    `$host.UI.RawUI.WindowTitle = 'Agent Ransack Installation'
+    Write-Host 'Agent Ransack is being downloaded...' -ForegroundColor White
+    Invoke-WebRequest -Uri 'https://download.mythicsoft.com/flp/3555/wzn-fyf5-HDG-mgW/agentransack_inx64_3555.exe' -OutFile '$env:TEMP\ar.exe' -UseBasicParsing
+    Write-Host 'Agent Ransack was downloaded, starting installer...' -ForegroundColor White
+    Write-Host ''
+    Write-Host 'Filename filter:' -ForegroundColor DarkGray
+    Write-Host '*.bat;*.cmd;*.config;*.db;*.doc*;*.ini;*.json;*.kdb;*.kdbx;*.log;*.mgs;*.ora;*.php;*.prod;*.ps1;*.pst;*.reg*;*.sql;*.test;*.txt;*.vb;*.vhdx;*.vnc;*.xls*;*.xml;*.yml;*_db.txt;AccessTokens.json;Kennwort*.txt;key3.db;key4.db;logins.json;ntds.dit;password*.txt;passwort*.txt;TokenCache.dat;*.bak;*.ps*;*.conf;*.msg;*.toml' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host 'Content filter:' -ForegroundColor DarkGray
+    Write-Host 'passwort= OR password= OR user= OR benutzername= OR benutzer= OR passwort: OR password: OR benutzername: OR password< OR passwort< OR user: OR benutzer: OR kennwort: OR password" OR passwort" OR "password =" OR "passwort =" OR pass: OR anmeldename OR -password OR -passwort OR connectstring= OR -p= OR $password OR $credential OR password} OR passwort} OR passwd OR /password: OR /passwort: OR pwd= OR pwd_ OR password' OR passwort' OR username: OR strpass' -ForegroundColor DarkGray
+    Write-Host ''
+    Start-Process '$env:TEMP\ar.exe' -Wait
+    Write-Host ''
+    Write-Host 'Press any key to close...' -ForegroundColor DarkGray
+    `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+"@
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$arCmd`""
+    Write-Host "[ OK ]   Agent Ransack setup started (manual steps required, see other terminal window)" -ForegroundColor Green
 }
 
 Write-Host ""
