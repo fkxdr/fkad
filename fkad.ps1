@@ -760,6 +760,7 @@ if ($msiOutput) {
     $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
     Write-Host "[P160]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
     Write-Host '             - msiexec /fa "{PSChildName from msi_list.txt}"' -ForegroundColor DarkGray
+    Write-Host "             - https://learn.microsoft.com/en-us/sysinternals/downloads/procmon" -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
