@@ -1074,7 +1074,7 @@ if (-not $onlineToolsAvailable) {
     Write-Host ''
     Write-Host 'Press any key to close...' -ForegroundColor DarkGray
     `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-    "@
+"@
     Start-Process powershell -ArgumentList "-NoProfile -Command `"$arCmd`""
     Write-Host "[ OK ]   Agent Ransack setup started (manual steps required, see other terminal window)" -ForegroundColor Green
 }
