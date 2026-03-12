@@ -53,7 +53,7 @@ try {
         $onlineToolsAvailable = $true
     }
 } catch {
-    Write-Host "[ !! ]   No internet access detected - online tools will be skipped" -ForegroundColor DarkYellow
+    Write-Host "[ !! ]   Powershell can not access GitHub - online tools will be skipped" -ForegroundColor DarkYellow
     $onlineToolsAvailable = $false
 }
 
@@ -521,37 +521,29 @@ try {
 
 # SYSVOL File ACL Check
 try {
-  $SYSVOLPath = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\Policies"
-  $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-  $sysvolFindings = @()
-
-  if (Test-Path $SYSVOLPath -ErrorAction SilentlyContinue) {
-    $folders = Get-ChildItem -Path $SYSVOLPath -Directory -ErrorAction SilentlyContinue
-    foreach ($folder in $folders) {
-      $ACL = Get-Acl -Path $folder.FullName -ErrorAction SilentlyContinue
-      foreach ($ACE in $ACL.Access) {
-        $rights = $ACE.FileSystemRights.ToString()
-        $identity = $ACE.IdentityReference.ToString()
-        $isAdmin = $nonAdminExclusions | Where-Object { $identity -match $_ }
-        if ($rights -match "Write|FullControl|Modify" -and -not $isAdmin) {
-          $sysvolFindings += [PSCustomObject]@{ Folder = $folder.Name; Identity = $identity; Rights = $rights }
+    $SYSVOLPath = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\Policies"
+    $sysvolFindings = @()
+    if (Test-Path $SYSVOLPath -ErrorAction SilentlyContinue) {
+        $folders = Get-ChildItem -Path $SYSVOLPath -Directory -ErrorAction SilentlyContinue
+        foreach ($folder in $folders) {
+            $testFile = "$($folder.FullName)\fkad_writetest_$(Get-Random)"
+            try {
+                [System.IO.File]::OpenWrite($testFile).Close()
+                Remove-Item $testFile -ErrorAction SilentlyContinue
+                $sysvolFindings += $folder.Name
+            } catch {}
         }
-      }
-    }
-
-    if ($sysvolFindings.Count -gt 0) {
-      Write-Host "[P125]   $($sysvolFindings.Count) SYSVOL GPO folder(s) with non-admin write permissions" -ForegroundColor DarkRed
-      foreach ($f in $sysvolFindings) {
-        Write-Host "          - $($f.Folder) - $($f.Identity) ($($f.Rights))" -ForegroundColor DarkRed
-      }
+        if ($sysvolFindings.Count -gt 0) {
+            Write-Host "[P125]   $($sysvolFindings.Count) SYSVOL GPO folder(s) writable as current user" -ForegroundColor DarkRed
+            $sysvolFindings | ForEach-Object { Write-Host "          - $_" -ForegroundColor DarkRed }
+        } else {
+            Write-Host "[ OK ]   No writable SYSVOL GPO folders found" -ForegroundColor Green
+        }
     } else {
-      Write-Host "[ OK ]   No non-admin SYSVOL write permissions found" -ForegroundColor Green
+        Write-Host "[ -- ]   SYSVOL path not accessible" -ForegroundColor DarkGray
     }
-  } else {
-    Write-Host "[ -- ]   SYSVOL path not accessible, user is not domain admin" -ForegroundColor DarkGrey
-  }
 } catch {
-  Write-Host "[ -- ]   SYSVOL ACL check failed: $_" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   SYSVOL check failed: $_" -ForegroundColor DarkYellow
 }
 
 # Tombstone deleted AD objects
