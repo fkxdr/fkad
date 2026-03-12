@@ -310,7 +310,7 @@ if ($isAdmin) {
         if ($foundExclusions.Count -gt 0) {
             Write-Host "          - [P075] Exclusions detected via event logs" -ForegroundColor DarkRed
             foreach ($path in $foundExclusions) {
-                Write-Host "          - $path" -ForegroundColor DarkGray
+                Write-Host "          $path" -ForegroundColor DarkGray
             }
         } else {
             Write-Host "          - Exclusions require more privs. Attempted bypass (eventlog 5007) but none were found" -ForegroundColor DarkGray
@@ -484,7 +484,7 @@ try {
 }
 
 # GPO ACL Check (AD level)
-$nonAdminExclusions = @("Admins", "SYSTEM", "Administrators", "ERSTELLER-BESITZER", "Creator Owner")
+$nonAdminExclusions = @("Admin", "SYSTEM", "Administrators", "ERSTELLER-BESITZER", "Creator Owner")
 try {
     $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
     $DN = "DC=" + ($domain.Name -replace "\.", ",DC=")
