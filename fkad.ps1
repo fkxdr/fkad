@@ -43,6 +43,20 @@ Write-Host "[*]   Device: $($env:COMPUTERNAME)" -ForegroundColor DarkGray
 Write-Host "[*]   User: $($env:USERNAME)" -ForegroundColor DarkGray
 Write-Host ""
 
+# Internet Access
+try {
+    $testReq = Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+    if ($testReq.Content -match "Firewall Authentication|You must authenticate|captive") {
+        Write-Host "[ !! ]   Captive Portal detected - internet access blocked, skipping online tools" -ForegroundColor DarkYellow
+        $onlineToolsAvailable = $false
+    } else {
+        $onlineToolsAvailable = $true
+    }
+} catch {
+    Write-Host "[ !! ]   No internet access detected - online tools will be skipped" -ForegroundColor DarkYellow
+    $onlineToolsAvailable = $false
+}
+
 $isAdmin = IsAdmin
 if ($isAdmin) {
     Write-Host "[ OK ]   Running as administrator" -ForegroundColor Red
@@ -118,7 +132,7 @@ Write-Host "          - https://github.com/bitsadmin/wesng for common vulns: wes
 Write-Host ""
 
 # AMRunningMode Status
-$DefenderPreferences = Get-MpPreference
+$DefenderPreferences = Get-MpPreference -ErrorAction SilentlyContinue
 $DefenderStatus = Get-MpComputerStatus
 $AMRunningMode = $DefenderStatus.AMRunningMode
 if ($AMRunningMode -eq "Normal" -or $AMRunningMode -eq "EDR Blocked") {
@@ -156,7 +170,7 @@ try {
 
 # Network Protection
 try {
-    $NetworkProtectionValue = (Get-MpPreference).EnableNetworkProtection
+    $NetworkProtectionValue = (Get-MpPreference -ErrorAction SilentlyContinue).EnableNetworkProtection
     if ($NetworkProtectionValue -eq 1) {
         Write-Host "          - Microsoft Defender for Endpoint Network Protection is enabled" -ForegroundColor Green
     } elseif ($NetworkProtectionValue -eq 0) {
@@ -221,7 +235,7 @@ try {
 
 # PUA Protection
 try {
-    $puaState = (Get-MpPreference).PUAProtection
+    $puaState = (Get-MpPreference -ErrorAction SilentlyContinue).PUAProtection
     if ($puaState -eq 1) {
         Write-Host "          - Potentially Unwanted Applications (PUA) Protection is enabled" -ForegroundColor Green
     } elseif ($puaState -eq 2) {
@@ -355,6 +369,8 @@ if (IsAdmin) {
 } else {
     Write-Host "          - ASR rule enumeration requires more privs" -ForegroundColor DarkGray
 }
+
+Write-Host ""
 
 # BitLocker
 $bitlockerStatus = (New-Object -ComObject Shell.Application).NameSpace('C:').Self.ExtendedProperty('System.Volume.BitLockerProtection')
@@ -505,7 +521,7 @@ try {
   $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
   $sysvolFindings = @()
 
-  if (Test-Path $SYSVOLPath) {
+  if (Test-Path $SYSVOLPath -ErrorAction SilentlyContinue) {
     $folders = Get-ChildItem -Path $SYSVOLPath -Directory -ErrorAction SilentlyContinue
     foreach ($folder in $folders) {
       $ACL = Get-Acl -Path $folder.FullName -ErrorAction SilentlyContinue
@@ -744,7 +760,7 @@ Write-Host ""
 
 # RDP connections
 try {
-    $rdp = reg query "HKCU\Software\Microsoft\Terminal Server Client\Default" 2>$null
+    $rdp = cmd /c 'reg query "HKCU\Software\Microsoft\Terminal Server Client\Servers" 2>nul'
     if ($rdp -match "MRU") {
         Write-Host "[P165]   RDP saved servers found -> rdp_servers.txt" -ForegroundColor DarkRed
         $rdp | Out-File "$OUT\rdp_servers.txt"
@@ -757,7 +773,7 @@ try {
 
 # PuTTY sessions
 try {
-    $putty = reg query "HKCU\Software\SimonTatham\PuTTY\Sessions" 2>$null
+    $putty = cmd /c 'reg query "HKCU\Software\SimonTatham\PuTTY\Sessions" 2>nul'
     if ($putty -match "Sessions") {
         Write-Host "[P170]   PuTTY sessions configured -> putty_sessions.txt" -ForegroundColor DarkRed
         $putty | Out-File "$OUT\putty_sessions.txt"
@@ -849,99 +865,123 @@ if (Test-Path $histFile) {
 Write-Host ""
 
 # PingCastle
-try {
-    $pingCastleUrl = "https://github.com/netwrix/pingcastle/releases/download/3.4.2.66/PingCastle_3.4.2.66.zip"
-    $pingCastlePath = "$env:TEMP\PingCastle_3.4.2.66.zip"
-    $pingCastleDir = "$env:TEMP\PingCastle"
-    Invoke-WebRequest -Uri $pingCastleUrl -OutFile $pingCastlePath -UseBasicParsing
-    Expand-Archive -Path $pingCastlePath -DestinationPath $pingCastleDir -Force
-    Push-Location $pingCastleDir
-    $pingOutput = & ".\PingCastle.exe" --healthcheck --datefile 2>&1
-    Pop-Location
-
-    if ($pingOutput -match "not connected to a domain|couldn't guess the domain") {
-        Write-Host "[ -- ]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
-    } else {
-        Move-Item -Path "$pingCastleDir\*.html" -Destination "$OUT\PingCastle.html" -Force -ErrorAction SilentlyContinue
-        Write-Host "[ OK ]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix October 2025)" -ForegroundColor Green
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   PingCastle skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    try {
+        $pingCastleUrl = "https://github.com/netwrix/pingcastle/releases/download/3.4.2.66/PingCastle_3.4.2.66.zip"
+        $pingCastlePath = "$env:TEMP\PingCastle_3.4.2.66.zip"
+        $pingCastleDir = "$env:TEMP\PingCastle"
+        Invoke-WebRequest -Uri $pingCastleUrl -OutFile $pingCastlePath -UseBasicParsing
+        Expand-Archive -Path $pingCastlePath -DestinationPath $pingCastleDir -Force
+        Push-Location $pingCastleDir
+        $pingOutput = & ".\PingCastle.exe" --healthcheck --datefile 2>&1
+        Pop-Location
+    
+        if ($pingOutput -match "not connected to a domain|couldn't guess the domain") {
+            Write-Host "[ -- ]   PingCastle: Computer is not connected to a domain" -ForegroundColor DarkYellow
+        } else {
+            Move-Item -Path "$pingCastleDir\*.html" -Destination "$OUT\PingCastle.html" -Force -ErrorAction SilentlyContinue
+            Write-Host "[ OK ]   PingCastle -> PingCastle.html (3.4.2.66, last version before Netwrix October 2025)" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "[ -- ]   PingCastle failed: $_" -ForegroundColor DarkYellow
     }
-} catch {
-    Write-Host "[ -- ]   PingCastle failed: $_" -ForegroundColor DarkYellow
 }
 
 # ADeleginator
-try {
-    $adelegDir = "$env:TEMP\ADeleg"
-    New-Item -ItemType Directory -Path $adelegDir -Force | Out-Null
-    Invoke-WebRequest -Uri "https://github.com/mtth-bfft/adeleg/releases/latest/download/adeleg.exe" -OutFile "$adelegDir\adeleg.exe" -UseBasicParsing -ErrorAction Stop
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
-    $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[ OK ]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
-} catch {
-    Write-Host "[ -- ]   ADeleginator failed: $_" -ForegroundColor DarkYellow
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   ADeleginator skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    try {
+        $adelegDir = "$env:TEMP\ADeleg"
+        New-Item -ItemType Directory -Path $adelegDir -Force | Out-Null
+        Invoke-WebRequest -Uri "https://github.com/mtth-bfft/adeleg/releases/latest/download/adeleg.exe" -OutFile "$adelegDir\adeleg.exe" -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
+        $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
+        Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+        Write-Host "[ OK ]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
+    } catch {
+        Write-Host "[ -- ]   ADeleginator failed: $_" -ForegroundColor DarkYellow
+    }
 }
 
 # ScriptSentry
-try {
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1" -OutFile "$env:TEMP\ScriptSentry.ps1" -UseBasicParsing -ErrorAction Stop
-    . "$env:TEMP\ScriptSentry.ps1"
-    $ssOutput = Invoke-ScriptSentry -ErrorAction SilentlyContinue 2>&1
-    $ssOutput | Where-Object { $_ -notmatch "GetCurrentForest|0x80005000|FindOne|Unknown error" } | Out-File "$OUT\scriptsentry.txt" -Encoding utf8
-    Write-Host "[ OK ]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
-} catch {
-    Write-Host "[ -- ]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   ScriptSentry skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    try {
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1" -OutFile "$env:TEMP\ScriptSentry.ps1" -UseBasicParsing -ErrorAction Stop
+        . "$env:TEMP\ScriptSentry.ps1"
+        $ssOutput = Invoke-ScriptSentry -ErrorAction SilentlyContinue 2>&1
+        $ssOutput | Where-Object { $_ -notmatch "GetCurrentForest|0x80005000|FindOne|Unknown error" } | Out-File "$OUT\scriptsentry.txt" -Encoding utf8
+        Write-Host "[ OK ]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
+    } catch {
+        Write-Host "[ -- ]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
+    }
 }
 
 # HardeningKitty
-try {
-    $hardKittyDir = "$env:TEMP\HardeningKitty"
-    New-Item -ItemType Directory -Path "$hardKittyDir\lists" -Force | Out-Null
-    Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.psm1' -OutFile "$hardKittyDir\HardeningKitty.psm1" -ErrorAction Stop
-    $lists = @('finding_list_0x6d69636b_machine.csv','finding_list_0x6d69636b_user.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_machine.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_user.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_machine.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_user.csv','finding_list_cis_microsoft_windows_server_2019_1809_3.0.0_machine.csv','finding_list_cis_microsoft_windows_server_2022_22h2_3.0.0_machine.csv')
-    foreach ($list in $lists) {
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/scipag/HardeningKitty/master/lists/$list" -OutFile "$hardKittyDir\lists\$list" -ErrorAction SilentlyContinue
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   HardeningKitty skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    try {
+        $hardKittyDir = "$env:TEMP\HardeningKitty"
+        New-Item -ItemType Directory -Path "$hardKittyDir\lists" -Force | Out-Null
+        Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/scipag/HardeningKitty/master/HardeningKitty.psm1' -OutFile "$hardKittyDir\HardeningKitty.psm1" -ErrorAction Stop
+        $lists = @('finding_list_0x6d69636b_machine.csv','finding_list_0x6d69636b_user.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_machine.csv','finding_list_cis_microsoft_windows_10_enterprise_22h2_3.0.0_user.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_machine.csv','finding_list_cis_microsoft_windows_11_enterprise_23h2_user.csv','finding_list_cis_microsoft_windows_server_2019_1809_3.0.0_machine.csv','finding_list_cis_microsoft_windows_server_2022_22h2_3.0.0_machine.csv')
+        foreach ($list in $lists) {
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/scipag/HardeningKitty/master/lists/$list" -OutFile "$hardKittyDir\lists\$list" -ErrorAction SilentlyContinue
+        }
+        Push-Location $hardKittyDir
+        $output = powershell -ExecutionPolicy Bypass -Command "Import-Module '$hardKittyDir\HardeningKitty.psm1' -Force; Invoke-HardeningKitty -Mode Audit" 2>&1
+        Pop-Location
+        $filtered = $output | Where-Object { $_ -notmatch '^\[!\]' -and $_ -notmatch '^\[+\]' -and $_ -notmatch 'Severity=Low' -and $_ -notmatch 'Severity=Passed' }
+        $filtered | Out-File "$OUT\HardeningKitty.txt" -Encoding utf8
+        Write-Host "[ OK ]   HardeningKitty (Medium+ only) -> HardeningKitty.txt" -ForegroundColor Green
+    } catch {
+        Write-Host "[ -- ]   HardeningKitty failed: $_" -ForegroundColor DarkYellow
     }
-    Push-Location $hardKittyDir
-    $output = powershell -ExecutionPolicy Bypass -Command "Import-Module '$hardKittyDir\HardeningKitty.psm1' -Force; Invoke-HardeningKitty -Mode Audit" 2>&1
-    Pop-Location
-    $filtered = $output | Where-Object { $_ -notmatch '^\[!\]' -and $_ -notmatch '^\[+\]' -and $_ -notmatch 'Severity=Low' -and $_ -notmatch 'Severity=Passed' }
-    $filtered | Out-File "$OUT\HardeningKitty.txt" -Encoding utf8
-    Write-Host "[ OK ]   HardeningKitty (Medium+ only) -> HardeningKitty.txt" -ForegroundColor Green
-} catch {
-    Write-Host "[ -- ]   HardeningKitty failed: $_" -ForegroundColor DarkYellow
 }
 
 # PrivescCheck
-try {
-    $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck' -Format HTML"
-    Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-    Write-Host "[ OK ]   PrivescCheck -> PrivescCheck.html" -ForegroundColor Green
-} catch {
-    Write-Host "[ -- ]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   PrivescCheck skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    try {
+        $cmd = "IEX (New-Object Net.WebClient).DownloadString('https://github.com/itm4n/PrivescCheck/releases/latest/download/PrivescCheck.ps1'); Invoke-PrivescCheck -Extended -Audit -Report '$OUT\PrivescCheck' -Format HTML"
+        Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+        Write-Host "[ OK ]   PrivescCheck -> PrivescCheck.html" -ForegroundColor Green
+    } catch {
+        Write-Host "[ -- ]   PrivescCheck failed: $_" -ForegroundColor DarkYellow
+    }
 }
 
 # Agent Ransack in additional window
-$arCmd = @"
-`$host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(80, 25)
-`$host.UI.RawUI.WindowTitle = 'Agent Ransack Installation'
-Write-Host 'Agent Ransack is being downloaded...' -ForegroundColor White
-Invoke-WebRequest -Uri 'https://download.mythicsoft.com/flp/3555/wzn-fyf5-HDG-mgW/agentransack_inx64_3555.exe' -OutFile '$env:TEMP\ar.exe' -UseBasicParsing
-Write-Host 'Agent Ransack was downloaded, starting installer...' -ForegroundColor White
-Write-Host ''
-Write-Host 'Filename filter:' -ForegroundColor DarkGray
-Write-Host '*.bat;*.cmd;*.config;*.db;*.doc*;*.ini;*.json;*.kdb;*.kdbx;*.log;*.mgs;*.ora;*.php;*.prod;*.ps1;*.pst;*.reg*;*.sql;*.test;*.txt;*.vb;*.vhdx;*.vnc;*.xls*;*.xml;*.yml;*_db.txt;AccessTokens.json;Kennwort*.txt;key3.db;key4.db;logins.json;ntds.dit;password*.txt;passwort*.txt;TokenCache.dat;*.bak;*.ps*;*.conf;*.msg;*.toml' -ForegroundColor DarkGray
-Write-Host ''
-Write-Host 'Content filter:' -ForegroundColor DarkGray
-Write-Host 'passwort= OR password= OR user= OR benutzername= OR benutzer= OR passwort: OR password: OR benutzername: OR password< OR passwort< OR user: OR benutzer: OR kennwort: OR password" OR passwort" OR "password =" OR "passwort =" OR pass: OR anmeldename OR -password OR -passwort OR connectstring= OR -p= OR $password OR $credential OR password} OR passwort} OR passwd OR /password: OR /passwort: OR pwd= OR pwd_ OR password' OR passwort' OR username: OR strpass' -ForegroundColor DarkGray
-Write-Host ''
-Start-Process '$env:TEMP\ar.exe' -Wait
-Write-Host ''
-Write-Host 'Press any key to close...' -ForegroundColor DarkGray
-`$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-"@
-Start-Process powershell -ArgumentList "-NoProfile -Command `"$arCmd`""
-Write-Host "[ OK ]   Agent Ransack setup started (manual steps required, see other terminal window)" -ForegroundColor Green
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   Agent Ransack skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    $arCmd = @"
+    `$host.UI.RawUI.WindowSize = New-Object System.Management.Automation.Host.Size(80, 25)
+    `$host.UI.RawUI.WindowTitle = 'Agent Ransack Installation'
+    Write-Host 'Agent Ransack is being downloaded...' -ForegroundColor White
+    Invoke-WebRequest -Uri 'https://download.mythicsoft.com/flp/3555/wzn-fyf5-HDG-mgW/agentransack_inx64_3555.exe' -OutFile '$env:TEMP\ar.exe' -UseBasicParsing
+    Write-Host 'Agent Ransack was downloaded, starting installer...' -ForegroundColor White
+    Write-Host ''
+    Write-Host 'Filename filter:' -ForegroundColor DarkGray
+    Write-Host '*.bat;*.cmd;*.config;*.db;*.doc*;*.ini;*.json;*.kdb;*.kdbx;*.log;*.mgs;*.ora;*.php;*.prod;*.ps1;*.pst;*.reg*;*.sql;*.test;*.txt;*.vb;*.vhdx;*.vnc;*.xls*;*.xml;*.yml;*_db.txt;AccessTokens.json;Kennwort*.txt;key3.db;key4.db;logins.json;ntds.dit;password*.txt;passwort*.txt;TokenCache.dat;*.bak;*.ps*;*.conf;*.msg;*.toml' -ForegroundColor DarkGray
+    Write-Host ''
+    Write-Host 'Content filter:' -ForegroundColor DarkGray
+    Write-Host 'passwort= OR password= OR user= OR benutzername= OR benutzer= OR passwort: OR password: OR benutzername: OR password< OR passwort< OR user: OR benutzer: OR kennwort: OR password" OR passwort" OR "password =" OR "passwort =" OR pass: OR anmeldename OR -password OR -passwort OR connectstring= OR -p= OR $password OR $credential OR password} OR passwort} OR passwd OR /password: OR /passwort: OR pwd= OR pwd_ OR password' OR passwort' OR username: OR strpass' -ForegroundColor DarkGray
+    Write-Host ''
+    Start-Process '$env:TEMP\ar.exe' -Wait
+    Write-Host ''
+    Write-Host 'Press any key to close...' -ForegroundColor DarkGray
+    `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    "@
+    Start-Process powershell -ArgumentList "-NoProfile -Command `"$arCmd`""
+    Write-Host "[ OK ]   Agent Ransack setup started (manual steps required, see other terminal window)" -ForegroundColor Green
+}
 
 Write-Host ""
 Write-Host "Done. Output folder: $OUT" -ForegroundColor DarkGray
