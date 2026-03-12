@@ -519,18 +519,6 @@ try {
     Write-Host "[ -- ]   GPO ACL check failed: $_" -ForegroundColor DarkYellow
 }
 
-  if ($gpoFindings.Count -gt 0) {
-    Write-Host "[P120]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
-    foreach ($f in $gpoFindings) {
-      Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Permission))" -ForegroundColor DarkRed
-    }
-  } else {
-    Write-Host "[ OK ]   No non-admin GPO write permissions found" -ForegroundColor Green
-  }
-} catch {
-  Write-Host "[ -- ]   GPO ACL check requires RSAT GroupPolicy module" -ForegroundColor DarkYellow
-}
-
 # SYSVOL File ACL Check
 try {
   $SYSVOLPath = "\\$env:USERDNSDOMAIN\SYSVOL\$env:USERDNSDOMAIN\Policies"
