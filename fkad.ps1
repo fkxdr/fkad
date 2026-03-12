@@ -752,6 +752,8 @@ $msiOutput = Get-WmiObject -Class Win32_Product |
 if ($msiOutput) {
     $msiOutput | Out-File "$OUT\msi_list.txt" -Encoding utf8
     Write-Host "[P160]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
+    Write-Host '             - Get-WmiObject -Class Win32_Product | Where-Object { $_.Name -like "*Target*" } | Select Name, IdentifyingNumber' -ForegroundColor DarkGray
+    Write-Host '             - msiexec /fa "{IdentifyingNumber}"' -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No MSI repair LPE vectors found" -ForegroundColor Green
 }
