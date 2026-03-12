@@ -744,56 +744,107 @@ $paths = @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
 )
-$msiOutput = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {
+$excludedVendors = @(
+    "Python Software Foundation",
+    "Parallels International GmbH"
+)
+$installer = New-Object -ComObject WindowsInstaller.Installer
+$msis = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {
     $_.DisplayName -and
     $_.WindowsInstaller -eq 1 -and
-    $_.Publisher -notin @(
-        "Microsoft Corporation",
-        "Microsoft",
-        "Python Software Foundation",
-        "Parallels International GmbH",
-        "Adobe Systems Incorporated",
-        "Adobe Inc."
-    )
-} | Select-Object DisplayName, Publisher, DisplayVersion, PSChildName
-if ($msiOutput) {
-    $report = @()
-    $icaclsCache = @{}
-    Get-ChildItem "C:\Windows\Installer\*.msi" -ErrorAction SilentlyContinue | ForEach-Object {
-        $icaclsCache[$_.Name] = icacls $_.FullName 2>$null
+    $_.PSChildName -match '^\{[0-9A-F\-]+\}$' -and
+    $_.Publisher -notlike 'Microsoft*' -and
+    $_.Publisher -notin $excludedVendors
+}
+$msiResult = foreach ($m in $msis) {
+    $guid = $m.PSChildName
+    $props = @{}
+    foreach ($p in 'InstallSource','LocalPackage','PackageName','Transforms','VersionString') {
+        try { $props[$p] = $installer.ProductInfo($guid, $p) }
+        catch { $props[$p] = $null }
     }
-    $i = 1
-    foreach ($product in $msiOutput) {
-        $guid = $product.PSChildName
-        $guidClean = $guid -replace '[{}-]', ''
-        $sourceKey = "HKLM:\SOFTWARE\Classes\Installer\Products\$guidClean\SourceList\Net"
-        $sourcePaths = Get-ItemProperty $sourceKey -ErrorAction SilentlyContinue
-        $report += ""
-        $report += "[$i] $($product.DisplayName)"
-        $report += "    ProductCode : $guid"
-        $report += "    Publisher   : $($product.Publisher)"
-        $report += "    Version     : $($product.DisplayVersion)"
-        $report += ""
-        $report += "    ICACLS C:\Windows\Installer (MSI-Cache):"
-        foreach ($entry in $icaclsCache.GetEnumerator()) {
-            $report += "      $($entry.Key):"
-            $entry.Value | ForEach-Object { $report += "        $_" }
-        }
-        $report += ""
-        $report += "    SourceList:"
-        if ($sourcePaths) {
-            $sourcePaths.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object {
-                $report += "      $($_.Name): $($_.Value)"
+    $sourceState = 'Empty'
+    if ($props.InstallSource) {
+        try {
+            if (Test-Path $props.InstallSource -ErrorAction Stop) { $sourceState = 'Exists' }
+            else { $sourceState = 'Missing' }
+        } catch [System.UnauthorizedAccessException] { $sourceState = 'AccessDenied' }
+        catch { $sourceState = 'Error' }
+    }
+    $localWritable = $false
+    $localAclText = $null
+    if ($props.LocalPackage) {
+        try {
+            $localAclText = (icacls $props.LocalPackage 2>$null) -join "`n"
+            if ($localAclText -match 'Everyone:\(.*[MWF]' -or
+                $localAclText -match 'Users:\(.*[MWF]' -or
+                $localAclText -match 'Authenticated Users:\(.*[MWF]') {
+                $localWritable = $true
             }
-        } else {
-            $report += "      (not found)"
-        }
+        } catch {}
+    }
+    $transformsWritable = $false
+    $transformsAclText = $null
+    if ($props.Transforms) {
+        try {
+            $transformsAclText = (icacls $props.Transforms 2>$null) -join "`n"
+            if ($transformsAclText -match 'Everyone:\(.*[MWF]' -or
+                $transformsAclText -match 'Users:\(.*[MWF]' -or
+                $transformsAclText -match 'Authenticated Users:\(.*[MWF]') {
+                $transformsWritable = $true
+            }
+        } catch {}
+    }
+    $priority = 'Low'
+    if ($props.Transforms)                                { $priority = 'High' }
+    elseif ($sourceState -in @('Missing','AccessDenied')) { $priority = 'Medium' }
+    if ($localWritable -or $transformsWritable)           { $priority = 'High' }
+    [PSCustomObject]@{
+        Name               = $m.DisplayName
+        Vendor             = $m.Publisher
+        GUID               = $guid
+        Version            = $props.VersionString
+        InstallSource      = $props.InstallSource
+        SourceState        = $sourceState
+        LocalPackage       = $props.LocalPackage
+        PackageName        = $props.PackageName
+        Transforms         = $props.Transforms
+        LocalWritable      = $localWritable
+        LocalACL           = $localAclText
+        TransformsWritable = $transformsWritable
+        TransformsACL      = $transformsAclText
+        Priority           = $priority
+    }
+}
+$sorted = $msiResult | Sort-Object @{Expression='Priority';Descending=$true}, @{Expression='Name';Descending=$false}
+if ($sorted) {
+    $report = @()
+    $report += "[P160] MSI Repair LPE - Kandidaten"
+    $report += "===================================="
+    $i = 1
+    foreach ($item in $sorted) {
+        $report += ""
+        $report += "[$i] $($item.Name) [$($item.Priority)]"
+        $report += "    Vendor             : $($item.Vendor)"
+        $report += "    GUID               : $($item.GUID)"
+        $report += "    Version            : $($item.Version)"
+        $report += "    PackageName        : $($item.PackageName)"
+        $report += "    InstallSource      : $($item.InstallSource)"
+        $report += "    SourceState        : $($item.SourceState)"
+        $report += "    LocalPackage       : $($item.LocalPackage)"
+        $report += "    LocalWritable      : $($item.LocalWritable)"
+        $report += "    LocalACL           :"
+        $item.LocalACL -split "`n" | ForEach-Object { $report += "      $_" }
+        $report += "    Transforms         : $($item.Transforms)"
+        $report += "    TransformsWritable : $($item.TransformsWritable)"
+        $report += "    TransformsACL      :"
+        $item.TransformsACL -split "`n" | ForEach-Object { $report += "      $_" }
         $report += "------------------------------------"
         $i++
     }
     $report | Out-File "$OUT\msi_list.txt" -Encoding utf8
-    Write-Host "[P160]   MSI repair LPE possible -> msi_list.txt" -ForegroundColor DarkRed
-    Write-Host '             - msiexec /fa "{PSChildName from msi_list.txt}"' -ForegroundColor DarkGray
+    Write-Host "[P160]   MSI repair might be LPE possible -> msi_list.txt" -ForegroundColor DarkRed
+    Write-Host '             - msiexec /fa "{GUID from msi_list.txt}"' -ForegroundColor DarkGray
     Write-Host "             - https://learn.microsoft.com/en-us/sysinternals/downloads/procmon" -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No MSI repair LPE vectors found" -ForegroundColor Green
