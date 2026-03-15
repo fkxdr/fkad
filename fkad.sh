@@ -946,7 +946,7 @@ if [ "$PRE2K_EVERYONE" -gt 0 ] || [ "$PRE2K_ANON" -gt 0 ]; then
   [ "$PRE2K_ANON" -gt 0 ] && echo -e "${RED}       └─ Anonymous Logon (S-1-5-7)${NC}"
   echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
 elif [ "$PRE2K_AUTHUSERS" -gt 0 ]; then
-  echo -e "${RED}[KO] Pre-Windows 2000 compatible access contains Authenticated Users→ pre2k_group.txt${NC}"
+  echo -e "${RED}[KO] Pre-Windows 2000 compatible access contains Authenticated Users → pre2k_group.txt${NC}"
   echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
 else
   echo -e "${GREEN}[OK] Pre-Windows 2000 compatible access group is clean${NC}"
@@ -1234,7 +1234,7 @@ if [ "$SHADOW_CREDS_COUNT" -gt 0 ]; then
     [ -z "$account" ] && continue
     echo -e "${RED}       └─ $account${NC}"
   done
-  echo -e "${GREY}       └─ pywhisker.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target <account> --action list${NC}"
+  echo -e "${GREY}       └─ pywhisker -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target <account> --action list${NC}"
 else
   echo -e "${GREEN}[OK] No Shadow Credentials found${NC}"
 fi
@@ -1310,7 +1310,7 @@ else
 fi
 
 # Email Security (SPF/DMARC)
-if [[ "$DOMAIN" == *.local ]]; then
+if [[ "$DOMAIN" == *.local || "$DOMAIN" == *.htb ]]; then
   echo -e "${GREY}[--] SPD and DMARC skipped (.local domain is internal only)${NC}"
 else
   SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
