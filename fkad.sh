@@ -753,6 +753,18 @@ else
   echo -e "${GREY}[--] Failed to enumerate computers${NC}"
 fi
 
+# DNS Zone Transfer (AXFR)
+AXFR_OUTPUT=$(dig axfr "$DOMAIN" @$DC_IP 2>/dev/null)
+if echo "$AXFR_OUTPUT" | grep -q "Transfer failed\|connection refused\|REFUSED\|timed out"; then
+  echo -e "${GREEN}[OK] Unauthenticated DNS Zone Transfer (AXFR) enumeration blocked${NC}"
+elif echo "$AXFR_OUTPUT" | grep -qE "^$DOMAIN\." ; then
+  RECORD_COUNT=$(echo "$AXFR_OUTPUT" | grep -cE "^$DOMAIN\.|IN\s+(A|AAAA|CNAME|MX|SRV)")
+  echo -e "${RED}[KO] Unauthenticated DNS Zone Transfer (AXFR) enumeration possible — $RECORD_COUNT record(s) exposed → axfr.txt${NC}"
+  echo "$AXFR_OUTPUT" > "$OUTPUT_DIR/axfr.txt"
+else
+  echo -e "${GREY}[--] Unauthenticated DNS Zone Transfer (AXFR) result inconclusive${NC}"
+fi
+
 # gMSA readable
 GMSA_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --gmsa 2>/dev/null)
 if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
