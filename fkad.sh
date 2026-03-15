@@ -1199,6 +1199,34 @@ else
   echo -e "${GREEN}[OK] No users with DES-only Kerberos encryption${NC}"
 fi
 
+# Reversible Encryption Check
+REV_ENC=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(userAccountControl:1.2.840.113556.1.4.803:=128)" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+REV_COUNT=$(echo "$REV_ENC" | grep -v "^$" | wc -l)
+if [ "$REV_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $REV_COUNT user(s) with Reversible Encryption enabled${NC}"
+  echo "$REV_ENC" | while read -r user; do
+    [ -z "$user" ] && continue
+    echo -e "${RED}       └─ $user${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No users with Reversible Encryption enabled${NC}"
+fi
+
+# OU ACL GenericWrite / ManageGPLink
+OU_ACLS=$(dacledit.py -action read -dc-ip $DC_IP "$FULL_USER:$PASSWORD" -b "$DOMAIN_DN" 2>/dev/null | awk '/Target.*OU=/ { match($0, /OU=[^,]+/); ou=substr($0,RSTART,RLENGTH) } /Access mask/ { mask=$NF } /Trustee \(SID\)/ { trustee=$NF; if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|Local System|SYSTEM|Policies/) { if (mask ~ /GenericWrite|GenericAll|WriteDACL|0xf01ff|0x40000/) { print ou "|" trustee "|" mask } } }' | sort -u)
+if [ ! -z "$OU_ACLS" ]; then
+  OU_COUNT=$(echo "$OU_ACLS" | grep -v "^$" | wc -l)
+  echo -e "${RED}[KO] $OU_COUNT non-default write ACE(s) on Organizational Units → ou_acls.txt${NC}"
+  echo "$OU_ACLS" | while IFS='|' read -r ou trustee mask; do
+    [ -z "$ou" ] && continue
+    echo -e "${RED}       └─ $trustee → $ou ($mask)${NC}"
+    echo -e "${GREY}          └─ gPLink poisoning possible (OUned.py) — affects all OU child objects incl. adminCount=1${NC}"
+  done
+  echo "$OU_ACLS" > "$OUTPUT_DIR/ou_acls.txt"
+else
+  echo -e "${GREEN}[OK] No non-default write ACEs on Organizational Units${NC}"
+fi
+
 # AdminSDHolder ACL
 if command -v dacledit.py &>/dev/null; then
   ADMINSDHOLDER_OUTPUT=$(dacledit.py -action read -target-dn "CN=AdminSDHolder,CN=System,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
