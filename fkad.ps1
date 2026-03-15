@@ -952,6 +952,41 @@ if (Test-Path $histFile) {
     Write-Host "[ OK ]   No PowerShell history found" -ForegroundColor Green
 }
 
+# AI tool storage
+$aiTools = @{
+    "Glean"    = @(
+        "$env:APPDATA\Glean\Local Storage\leveldb",
+        "$env:LOCALAPPDATA\Glean\Local Storage\leveldb"
+    )
+    "eesel"    = @(
+        "$env:APPDATA\eesel\Local Storage\leveldb",
+        "$env:LOCALAPPDATA\eesel\Local Storage\leveldb"
+    )
+    "Notion"   = @(
+        "$env:APPDATA\Notion\Local Storage\leveldb"
+    )
+    "Slack"    = @(
+        "$env:APPDATA\Slack\Local Storage\leveldb"
+    )
+}
+$foundAI = @()
+foreach ($tool in $aiTools.Keys) {
+    foreach ($path in $aiTools[$tool]) {
+        if (Test-Path $path) {
+            $foundAI += $tool
+            Copy-Item $path "$OUT\ai_${tool}_storage" -Recurse -ErrorAction SilentlyContinue
+            break
+        }
+    }
+}
+
+if ($foundAI.Count -gt 0) {
+    Write-Host "[P200]   Enterprise AI tool storage found: $($foundAI -join ', ') → ai_*_storage" -ForegroundColor DarkRed
+    Write-Host "          - Extract tokens from .ldb files: strings *.ldb | grep -i 'token\|bearer\|api'" -ForegroundColor DarkGray
+} else {
+    Write-Host "[ OK ]   No Enterprise AI tool local storage found" -ForegroundColor Green
+}
+
 Write-Host ""
 
 # PingCastle
