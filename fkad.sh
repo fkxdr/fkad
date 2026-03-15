@@ -339,6 +339,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
 else
   echo -e "${GREY}[--] Certipy not found, skipping ADCS check${NC}"
 fi
+mv "$OUTPUT_DIR"/*_Certipy.json "$OUTPUT_DIR/bloodhound/" 2>/dev/null
 
 # ADCS CA Officer check
 if [ ! -z "$CERTIPY_CMD" ]; then
