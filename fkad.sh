@@ -1167,12 +1167,13 @@ fi
 GMSA_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --gmsa 2>/dev/null)
 if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
   GMSA_COUNT=$(echo "$GMSA_OUTPUT" | grep -c "Account:")
-  echo -e "${RED}[KO] $GMSA_COUNT readable gMSA account(s) found${NC}"
+  echo -e "${RED}[KO] $GMSA_COUNT readable gMSA account(s) found → gmsa_readable.txt${NC}"
   echo "$GMSA_OUTPUT" | grep "Account:" | while read -r line; do
     GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
-    GMSA_HASH=$(echo "$GMSA_OUTPUT" | grep -A2 "Account: $GMSA_NAME" | grep -oP 'NTLM: \K\S+')
+    GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K\S+')
     echo -e "${RED}       └─ $GMSA_NAME${NC}"
     [ ! -z "$GMSA_HASH" ] && echo -e "${GREY}          └─ NT: $GMSA_HASH${NC}"
+    [ ! -z "$GMSA_HASH" ] && echo -e "${GREY}          └─ certipy find -u '$GMSA_NAME@$DOMAIN' -hashes ':$GMSA_HASH' -dc-ip $DC_IP -vulnerable -stdout${NC}"
   done
   echo "$GMSA_OUTPUT" | grep "Account:" > "$OUTPUT_DIR/gmsa_readable.txt"
 else
