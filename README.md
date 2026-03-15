@@ -18,12 +18,13 @@ chmod +x fkad.sh
 Example:
 
 ```bash
-./fkad.sh -u pentest1 -p 'Pentestpassword123' -d 10.10.2.13
+./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com
+./fkad.sh -u pentest1 -p 'Pentestpassword123' -d 10.10.2.13 -scope scope.txt
 ./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com -fast
 ```
 
 > [!NOTE]
-> The -fast flag limits extensive bloodhound checks in AD environments with a lot of dead objects.
+> The -fast flag limits extensive bloodhound checks in AD environments with many stale or dead objects, while the -scope flag allows the usage of a scoping file.txt with additional CIDR ranges (one per line) to extend network scans beyond the primary subnet.
 
 
 ## Follow-Up Enumeration
