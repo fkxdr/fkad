@@ -1171,9 +1171,7 @@ if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
   echo "$GMSA_OUTPUT" | grep "Account:" | while read -r line; do
     GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
     GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K\S+')
-    echo -e "${RED}       └─ $GMSA_NAME${NC}"
-    [ ! -z "$GMSA_HASH" ] && echo -e "${GREY}          └─ NT: $GMSA_HASH${NC}"
-    [ ! -z "$GMSA_HASH" ] && echo -e "${GREY}          └─ certipy find -u '$GMSA_NAME@$DOMAIN' -hashes ':$GMSA_HASH' -dc-ip $DC_IP -vulnerable -stdout${NC}"
+  echo -e "${RED}       └─ $GMSA_NAME (NT: $GMSA_HASH)${NC}"
   done
   echo "$GMSA_OUTPUT" | grep "Account:" > "$OUTPUT_DIR/gmsa_readable.txt"
 else
