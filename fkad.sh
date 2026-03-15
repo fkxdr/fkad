@@ -70,19 +70,24 @@ echo -e "${GREEN}[OK] Offensive tooling is installed on the attack box${NC}"
 echo ""
 
 # Parse arguments
-BH_MODE="All"  # Default: full collection
-
-# Pre-process arguments to handle -fast
+BH_MODE="All"
 ARGS=()
+SCOPE_FILE=""
+SKIP_NEXT=0
 for arg in "$@"; do
+  if [ "$SKIP_NEXT" -eq 1 ]; then
+    SCOPE_FILE="$arg"
+    SKIP_NEXT=0
+    continue
+  fi
   if [ "$arg" = "-fast" ]; then
     BH_MODE="DCOnly"
+  elif [ "$arg" = "-scope" ]; then
+    SKIP_NEXT=1
   else
     ARGS+=("$arg")
   fi
 done
-
-# Reset positional parameters
 set -- "${ARGS[@]}"
 
 while getopts "u:p:d:fh" opt; do
@@ -90,10 +95,11 @@ while getopts "u:p:d:fh" opt; do
     u) AD_USER="$OPTARG" ;;
     p) PASSWORD="$OPTARG" ;;
     d) DC_IP="$OPTARG" ;;
-    f) BH_MODE="DCOnly" ;;  # Fast mode: bloodhound domain data only
+    f) BH_MODE="DCOnly" ;;
     h) 
-      echo "Usage: $0 -u AD_USER -p password -d dc_ip [-f|-fast]"
+      echo "Usage: $0 -u AD_USER -p password -d dc_ip [-f|-fast] [-scope scope.txt]"
       echo "  -f, -fast    Fast mode: BloodHound DCOnly (skip computer enumeration)"
+      echo "  -scope FILE  Additional subnets to scan (one CIDR per line)"
       exit 0
       ;;
     *) exit 1 ;;
@@ -148,6 +154,26 @@ if [ -z "$DOMAIN" ]; then
 fi
 DOMAIN_DN=$(echo "$DOMAIN" | sed 's/\./,DC=/g' | sed 's/^/DC=/')
 FULL_USER="$AD_USER@$DOMAIN"
+
+# Derive subnet and build scan targets
+SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
+PRIMARY_SUBNET="${SUBNET}.0/24"
+SCAN_TARGETS=("$PRIMARY_SUBNET")
+
+if [ ! -z "$SCOPE_FILE" ]; then
+  if [ ! -f "$SCOPE_FILE" ]; then
+    echo -e "${RED}[ERROR] Scope file not found: $SCOPE_FILE${NC}"
+    exit 1
+  fi
+  while IFS= read -r cidr; do
+    cidr=$(echo "$cidr" | tr -d '[:space:]')
+    [ -z "$cidr" ] && continue
+    [[ "$cidr" =~ ^# ]] && continue
+    SCAN_TARGETS+=("$cidr")
+  done < "$SCOPE_FILE"
+  echo -e "${GREY}[*] Scope: ${#SCAN_TARGETS[@]} subnet(s) (${SCAN_TARGETS[*]})${NC}"
+fi
+SCAN_TARGETS_STR="${SCAN_TARGETS[*]}"
 
 # Hostname DC
 DC_HOSTNAME=$(echo "$NXC_SMB" | grep -oP '(?<=name:)[^)]+' | tr -d ' ')
@@ -309,6 +335,19 @@ else
   echo -e "${GREY}[--] Certipy not found, skipping ADCS check${NC}"
 fi
 
+# ADCS CA Officer check
+if [ ! -z "$CERTIPY_CMD" ]; then
+  CA_OFFICERS_RAW=$($CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -target $DC_FQDN -stdout 2>/dev/null | grep -A3 "ManageCa\|ManageCertificates")
+  CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -v "Domain Admins\|Enterprise Admins\|Administrators\|ManageCa\|ManageCertificates\|^--$" | grep -i "$DOMAIN" | awk '{print $NF}' | sort -u)
+  if [ ! -z "$CA_DANGEROUS" ]; then
+    CA_COUNT=$(echo "$CA_DANGEROUS" | wc -l)
+    echo -e "${GREY}[*] $CA_COUNT non-default ManageCA/ManageCertificates principal(s) → adcs_officers.txt${NC}"
+    echo "$CA_DANGEROUS" > "$OUTPUT_DIR/adcs_officers.txt"
+  else
+    echo -e "${GREEN}[OK] ManageCA/ManageCertificates restricted to default groups${NC}"
+  fi
+fi
+
 # LDAP Signing & Channel Binding - Multi-DC Check
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldap_security_check.csv"
@@ -362,9 +401,14 @@ else
   fi
 fi
 
-# Scan subnet for relay targets (exclude DCs)
+# Scan scope for relay targets (exclude DCs)
 SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
-nxc smb ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_targets_raw.txt" &>/dev/null
+> "$OUTPUT_DIR/relay_targets_raw.txt"
+for target in "${SCAN_TARGETS[@]}"; do
+  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_raw_tmp.txt" &>/dev/null
+  [ -f "$OUTPUT_DIR/relay_raw_tmp.txt" ] && cat "$OUTPUT_DIR/relay_raw_tmp.txt" >> "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm -f "$OUTPUT_DIR/relay_raw_tmp.txt"
+done
 
 # Get all DC IPs from AD
 DC_IPS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
@@ -1290,7 +1334,13 @@ fi
 # GoWitness
 echo ""
 mkdir -p "$OUTPUT_DIR/screenshots"
-nmap -p80,443,8080,8443 ${SUBNET}.0/24 --open -oG - 2>/dev/null | awk '/open/{print $2}' | grep -E '^[0-9]' | while read -r ip; do echo "http://$ip"; echo "https://$ip"; done > "$OUTPUT_DIR/http_targets.txt"
+> "$OUTPUT_DIR/http_targets.txt"
+for target in "${SCAN_TARGETS[@]}"; do
+  nmap -p80,443,8080,8443 "$target" --open -oG - 2>/dev/null | awk '/open/{print $2}' | grep -E '^[0-9]' | while read -r ip; do
+        echo "http://$ip"
+        echo "https://$ip"
+      done >> "$OUTPUT_DIR/http_targets.txt"
+done
 HTTP_COUNT=$([ -f "$OUTPUT_DIR/http_targets.txt" ] && wc -l < "$OUTPUT_DIR/http_targets.txt" || echo 0)
 if [ "$HTTP_COUNT" -gt 0 ] && command -v gowitness &>/dev/null; then
   gowitness scan file -f "$OUTPUT_DIR/http_targets.txt" --screenshot-path "$OUTPUT_DIR/screenshots/" --timeout 10 --threads 10 --write-none 2>/dev/null
@@ -1303,7 +1353,12 @@ else
 fi
 
 # NFS Share Enumeration
-NFS_HOSTS=$(nmap -Pn -p 2049 --open ${SUBNET}.0/24 -oG - 2>/dev/null | awk '/open/{print $2}')
+NFS_HOSTS=""
+for target in "${SCAN_TARGETS[@]}"; do
+  FOUND=$(nmap -Pn -p 2049 --open "$target" -oG - 2>/dev/null | awk '/open/{print $2}')
+  [ ! -z "$FOUND" ] && NFS_HOSTS+="$FOUND"$'\n'
+done
+NFS_HOSTS=$(echo "$NFS_HOSTS" | grep -v "^$")
 NFS_COUNT=$(echo "$NFS_HOSTS" | grep -c . 2>/dev/null || echo 0)
 if [ "$NFS_COUNT" -gt 0 ]; then
   > "$OUTPUT_DIR/nfs_shares.txt"
@@ -1333,15 +1388,17 @@ else
 fi
 
 # SMB Share Enumeration
-nxc smb ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null \
-  | grep -E "READ|WRITE" > "$OUTPUT_DIR/smb_shares.txt"
+> "$OUTPUT_DIR/smb_shares.txt"
+for target in "${SCAN_TARGETS[@]}"; do
+  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null | grep -E "READ|WRITE" >> "$OUTPUT_DIR/smb_shares.txt"
+done
 
 READABLE=0
 [ -f "$OUTPUT_DIR/smb_shares.txt" ] && READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" | tr -d ' \n')
 if [ "$READABLE" -gt 0 ]; then
   echo -e "${RED}[KO] $READABLE readable/writable share(s) found → smb_shares.txt${NC}"
 else
-  echo -e "${GREEN}[OK] No readable/writable shares found on ${SUBNET}.0/24${NC}"
+  echo -e "${GREEN}[OK] No readable/writable shares found across all scope targets${NC}"
 fi
 
 # Manspider against readable SMB Shares
@@ -1379,7 +1436,12 @@ if [ "$BH_MODE" != "DCOnly" ]; then
 fi
 
 # MSSQL Discovery
-MSSQL_HOSTS=$(nxc mssql ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" 2>/dev/null | grep "\[+\]" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+MSSQL_HOSTS=""
+for target in "${SCAN_TARGETS[@]}"; do
+  FOUND=$(nxc mssql "$target" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" 2>/dev/null | grep "\[+\]" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+  [ ! -z "$FOUND" ] && MSSQL_HOSTS+="$FOUND"$'\n'
+done
+MSSQL_HOSTS=$(echo "$MSSQL_HOSTS" | grep -v "^$")
 MSSQL_COUNT=$(echo "$MSSQL_HOSTS" | grep -v "^$" | wc -l)
 if [ "$MSSQL_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $MSSQL_COUNT MSSQL instance(s) found → checking privileges${NC}"
