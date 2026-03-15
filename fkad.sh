@@ -1163,6 +1163,22 @@ else
   echo -e "${GREEN}[OK] No accounts with sIDHistory found${NC}"
 fi
 
+# gMSA Readable Check
+GMSA_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --gmsa 2>/dev/null)
+if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
+  GMSA_COUNT=$(echo "$GMSA_OUTPUT" | grep -c "Account:")
+  echo -e "${RED}[KO] $GMSA_COUNT readable gMSA account(s) found${NC}"
+  echo "$GMSA_OUTPUT" | grep "Account:" | while read -r line; do
+    GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
+    GMSA_HASH=$(echo "$GMSA_OUTPUT" | grep -A2 "Account: $GMSA_NAME" | grep -oP 'NTLM: \K\S+')
+    echo -e "${RED}       └─ $GMSA_NAME${NC}"
+    [ ! -z "$GMSA_HASH" ] && echo -e "${GREY}          └─ NT: $GMSA_HASH${NC}"
+  done
+  echo "$GMSA_OUTPUT" | grep "Account:" > "$OUTPUT_DIR/gmsa_readable.txt"
+else
+  echo -e "${GREEN}[OK] No readable gMSA accounts${NC}"
+fi
+
 # Shadow Credentials Check
 SHADOW_CREDS_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(msDS-KeyCredentialLink=*)" sAMAccountName msDS-KeyCredentialLink 2>/dev/null)
 SHADOW_CREDS_ACCOUNTS=$(echo "$SHADOW_CREDS_OUTPUT" | grep "^sAMAccountName:" | awk '{print $2}')
@@ -1320,7 +1336,8 @@ fi
 nxc smb ${SUBNET}.0/24 -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null \
   | grep -E "READ|WRITE" > "$OUTPUT_DIR/smb_shares.txt"
 
-READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" 2>/dev/null || echo 0)
+READABLE=0
+[ -f "$OUTPUT_DIR/smb_shares.txt" ] && READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" | tr -d ' \n')
 if [ "$READABLE" -gt 0 ]; then
   echo -e "${RED}[KO] $READABLE readable/writable share(s) found → smb_shares.txt${NC}"
 else
@@ -1346,8 +1363,8 @@ if [ "$BH_MODE" != "DCOnly" ]; then
         timeout 60 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c passw passw secret credential token apikey username connectionstring bios pwd passw admin account login logon cred bank ELBA -e txt xml ini config conf csv bat ps1 -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
         cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       done
-      SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" 2>/dev/null || echo 0)
-      if [ "$SPIDER_COUNT" -gt 0 ]; then
+      SPIDER_COUNT=0
+      [ -f "$OUTPUT_DIR/manspider/manspider.txt" ] && SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" | tr -d ' \n')      if [ "$SPIDER_COUNT" -gt 0 ]; then
         echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/manspider.txt${NC}"
       else
         echo -e "${GREEN}[OK] Manspider found no sensitive content on readable shares${NC}"
