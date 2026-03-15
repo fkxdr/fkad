@@ -695,6 +695,22 @@ else
   echo -e "${GREY}[--] Failed to enumerate computers${NC}"
 fi
 
+# gMSA readable
+GMSA_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --gmsa 2>/dev/null)
+if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
+  GMSA_COUNT=$(echo "$GMSA_OUTPUT" | grep -c "Account:")
+  echo -e "${RED}[KO] $GMSA_COUNT readable gMSA account(s) found → gmsa_readable.txt${NC}"
+  echo "$GMSA_OUTPUT" | grep "Account:" | while read -r line; do
+    GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
+    GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K\S+')
+  echo -e "${RED}       └─ $GMSA_NAME (NT: $GMSA_HASH)${NC}"
+  done
+  echo "$GMSA_OUTPUT" | grep "Account:" > "$OUTPUT_DIR/gmsa_readable.txt"
+else
+  echo -e "${GREEN}[OK] No readable gMSA accounts${NC}"
+fi
+
+# BloodHound
 if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/null; then
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
   cd "$OUTPUT_DIR/bloodhound"
@@ -1163,21 +1179,6 @@ else
   echo -e "${GREEN}[OK] No accounts with sIDHistory found${NC}"
 fi
 
-# gMSA Readable Check
-GMSA_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --gmsa 2>/dev/null)
-if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
-  GMSA_COUNT=$(echo "$GMSA_OUTPUT" | grep -c "Account:")
-  echo -e "${RED}[KO] $GMSA_COUNT readable gMSA account(s) found → gmsa_readable.txt${NC}"
-  echo "$GMSA_OUTPUT" | grep "Account:" | while read -r line; do
-    GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
-    GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K\S+')
-  echo -e "${RED}       └─ $GMSA_NAME (NT: $GMSA_HASH)${NC}"
-  done
-  echo "$GMSA_OUTPUT" | grep "Account:" > "$OUTPUT_DIR/gmsa_readable.txt"
-else
-  echo -e "${GREEN}[OK] No readable gMSA accounts${NC}"
-fi
-
 # Shadow Credentials Check
 SHADOW_CREDS_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(msDS-KeyCredentialLink=*)" sAMAccountName msDS-KeyCredentialLink 2>/dev/null)
 SHADOW_CREDS_ACCOUNTS=$(echo "$SHADOW_CREDS_OUTPUT" | grep "^sAMAccountName:" | awk '{print $2}')
@@ -1363,7 +1364,8 @@ if [ "$BH_MODE" != "DCOnly" ]; then
         cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       done
       SPIDER_COUNT=0
-      [ -f "$OUTPUT_DIR/manspider/manspider.txt" ] && SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" | tr -d ' \n')      if [ "$SPIDER_COUNT" -gt 0 ]; then
+      [ -f "$OUTPUT_DIR/manspider/manspider.txt" ] && SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" | tr -d ' \n')
+      if [ "$SPIDER_COUNT" -gt 0 ]; then
         echo -e "${RED}[KO] Manspider found $SPIDER_COUNT file(s) with sensitive content → manspider/manspider.txt${NC}"
       else
         echo -e "${GREEN}[OK] Manspider found no sensitive content on readable shares${NC}"
