@@ -19,6 +19,56 @@ echo -e "${GREY}    fkad by @fkxdr${NC}"
 echo -e "${GREY}    https://github.com/fkxdr/fkad${NC}"
 echo ""
 
+# Check Tooling
+PREFLIGHT_FAIL=0
+
+for tool in nxc ldapsearch dig nmap showmount; do
+  if ! command -v "$tool" &>/dev/null; then
+    echo -e "${RED}[ERROR] Missing: $tool (not found in PATH)${NC}"
+    PREFLIGHT_FAIL=1
+  fi
+done
+
+if ! command -v bloodhound-python &>/dev/null && ! command -v bloodhound.py &>/dev/null; then
+  echo -e "${RED}[ERROR] Missing: bloodhound-python (not found in PATH)${NC}"
+  PREFLIGHT_FAIL=1
+fi
+
+if ! command -v dacledit.py &>/dev/null && [ ! -x "/root/.local/bin/dacledit.py" ]; then
+  echo -e "${RED}[ERROR] Missing: dacledit.py (not in PATH or /root/.local/bin/)${NC}"
+  PREFLIGHT_FAIL=1
+fi
+
+if ! command -v certipy &>/dev/null && \
+   ! command -v certipy-ad &>/dev/null && \
+   [ ! -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
+  echo -e "${GREY}[--] certipy not found — ADCS check will be skipped${NC}"
+fi
+
+if ! command -v gowitness &>/dev/null; then
+  echo -e "${GREY}[--] gowitness not found — screenshots will be skipped${NC}"
+fi
+
+if ! command -v manspider &>/dev/null && [ ! -x "/root/.local/bin/manspider" ]; then
+  echo -e "${GREY}[--] manspider not found — SMB content scan will be skipped${NC}"
+fi
+
+GRIFFON_PATH="/workspace/GriffonAD"
+if [ ! -d "$GRIFFON_PATH" ]; then
+  git clone https://github.com/shellinvictus/GriffonAD "$GRIFFON_PATH" &>/dev/null 2>&1
+  if [ -d "$GRIFFON_PATH" ]; then
+    pip install -r "$GRIFFON_PATH/requirements.txt" &>/dev/null 2>&1
+    echo -e "${GREEN}[OK] GriffonAD installed${NC}"
+  else
+    echo -e "${GREY}[--] GriffonAD installation failed${NC}"
+  fi
+fi
+
+[ "$PREFLIGHT_FAIL" -eq 1 ] && exit 1
+
+echo -e "${GREEN}[OK] Offensive tooling is installed on the attack box${NC}"
+echo ""
+
 # Parse arguments
 BH_MODE="All"  # Default: full collection
 
@@ -78,8 +128,17 @@ if [ -z "$AD_USER" ] || [ -z "$PASSWORD" ] || [ -z "$DC_IP" ]; then
   exit 1
 fi
 
-# Single nxc call to cache
+# Single nxc call to cache, check user and domain
 NXC_SMB=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
+
+if echo "$NXC_SMB" | grep -qE "STATUS_LOGON_FAILURE|STATUS_ACCOUNT_LOCKED|STATUS_ACCOUNT_DISABLED|STATUS_PASSWORD_EXPIRED"; then
+  echo -e "${RED}[ERROR] Authentication failed for $AD_USER against $DC_IP${NC}"
+  exit 1
+fi
+if ! echo "$NXC_SMB" | grep -q "domain:"; then
+  echo -e "${RED}[ERROR] Could not reach DC or parse response from $DC_IP${NC}"
+  exit 1
+fi
 
 # Discover domain
 DOMAIN=$(echo "$NXC_SMB" | grep -oP '(?<=domain:)[^)]+' | tr -d ' ')
@@ -143,21 +202,6 @@ else
 fi
 
 echo ""
-
-# Check and patch GriffonAD
-GRIFFON_PATH="/workspace/GriffonAD"
-if [ ! -d "$GRIFFON_PATH" ]; then
-  echo -e "${GREY}[--] Installing GriffonAD...${NC}"
-  git clone https://github.com/shellinvictus/GriffonAD "$GRIFFON_PATH" &>/dev/null 2>&1
-  if [ -d "$GRIFFON_PATH" ]; then
-    cd "$GRIFFON_PATH"
-    pip install -r requirements.txt &>/dev/null 2>&1
-    cd "$CURRENT_PATH"
-    echo -e "${GREEN}[OK] GriffonAD installed${NC}"
-  else
-    echo -e "${GREY}[--] GriffonAD installation failed (git clone error)${NC}"
-  fi
-fi
 
 # ADCS/PKI Vulnerability Check
 if [ -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
