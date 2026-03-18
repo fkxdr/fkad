@@ -57,6 +57,14 @@ try {
     $onlineToolsAvailable = $false
 }
 
+
+$isDomainJoined = (Get-WmiObject Win32_ComputerSystem).PartOfDomain
+if ($isDomainJoined) {
+    Write-Host "[ OK ]   Domain-joined: $env:USERDNSDOMAIN" -ForegroundColor Green
+} else {
+    Write-Host "[ -- ]   Not domain-joined - AD-dependent checks will be skipped" -ForegroundColor DarkGray
+}
+
 $isAdmin = IsAdmin
 if ($isAdmin) {
     Write-Host "[ OK ]   Running as administrator" -ForegroundColor Red
@@ -482,39 +490,43 @@ try {
 }
 
 # GPO ACL Check (AD level)
-$nonAdminExclusions = @("Admin", "SYSTEM", "Administrators", "ERSTELLER-BESITZER", "Creator Owner")
-try {
-    $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
-    $DN = "DC=" + ($domain.Name -replace "\.", ",DC=")
-    $entry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=Policies,CN=System,$DN")
-    $searcher = New-Object System.DirectoryServices.DirectorySearcher($entry)
-    $searcher.Filter = "(objectClass=groupPolicyContainer)"
-    $searcher.PropertiesToLoad.AddRange(@("displayName", "nTSecurityDescriptor", "cn"))
-    $searcher.SearchScope = "OneLevel"
-    $results = $searcher.FindAll()
-    $gpoFindings = @()
-    foreach ($result in $results) {
-        $gpoName = $result.Properties["displayName"][0]
-        $acl = $result.GetDirectoryEntry().ObjectSecurity
-        foreach ($ace in $acl.Access) {
-            $trustee = $ace.IdentityReference.ToString()
-            $rights = $ace.ActiveDirectoryRights.ToString()
-            $isAdmin = $nonAdminExclusions | Where-Object { $trustee -match $_ }
-            if ($rights -match "WriteProperty|WriteDacl|WriteOwner|GenericWrite|GenericAll" -and -not $isAdmin) {
-                $gpoFindings += [PSCustomObject]@{ GPO = $gpoName; Trustee = $trustee; Rights = $rights }
+if (-not $isDomainJoined) {
+    Write-Host "[ -- ]   GPO ACL check skipped (not domain-joined)" -ForegroundColor DarkGray
+    } else {
+    $nonAdminExclusions = @("Admin", "SYSTEM", "Administrators", "ERSTELLER-BESITZER", "Creator Owner")
+    try {
+        $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+        $DN = "DC=" + ($domain.Name -replace "\.", ",DC=")
+        $entry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=Policies,CN=System,$DN")
+        $searcher = New-Object System.DirectoryServices.DirectorySearcher($entry)
+        $searcher.Filter = "(objectClass=groupPolicyContainer)"
+        $searcher.PropertiesToLoad.AddRange(@("displayName", "nTSecurityDescriptor", "cn"))
+        $searcher.SearchScope = "OneLevel"
+        $results = $searcher.FindAll()
+        $gpoFindings = @()
+        foreach ($result in $results) {
+            $gpoName = $result.Properties["displayName"][0]
+            $acl = $result.GetDirectoryEntry().ObjectSecurity
+            foreach ($ace in $acl.Access) {
+                $trustee = $ace.IdentityReference.ToString()
+                $rights = $ace.ActiveDirectoryRights.ToString()
+                $isAdmin = $nonAdminExclusions | Where-Object { $trustee -match $_ }
+                if ($rights -match "WriteProperty|WriteDacl|WriteOwner|GenericWrite|GenericAll" -and -not $isAdmin) {
+                    $gpoFindings += [PSCustomObject]@{ GPO = $gpoName; Trustee = $trustee; Rights = $rights }
+                }
             }
         }
-    }
-    if ($gpoFindings.Count -gt 0) {
-        Write-Host "[P120]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
-        foreach ($f in $gpoFindings) {
-            Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Rights))" -ForegroundColor DarkRed
+        if ($gpoFindings.Count -gt 0) {
+            Write-Host "[P120]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
+            foreach ($f in $gpoFindings) {
+                Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Rights))" -ForegroundColor DarkRed
+            }
+        } else {
+            Write-Host "[ OK ]   no non-admin GPO write permissions found" -ForegroundColor Green
         }
-    } else {
-        Write-Host "[ OK ]   no non-admin GPO write permissions found" -ForegroundColor Green
+    } catch {
+        Write-Host "[ -- ]   GPO ACL check failed: $_" -ForegroundColor DarkYellow
     }
-} catch {
-    Write-Host "[ -- ]   GPO ACL check failed: $_" -ForegroundColor DarkYellow
 }
 
 # SYSVOL File ACL Check
@@ -1048,34 +1060,42 @@ if (-not $onlineToolsAvailable) {
 }
 
 # ADeleginator
-if (-not $onlineToolsAvailable) {
-    Write-Host "[ -- ]   ADeleginator skipped (no connection possible)" -ForegroundColor DarkGray
+if (-not $isDomainJoined) {
+    Write-Host "[ -- ]   ADeleginator skipped (not domain-joined)" -ForegroundColor DarkGray
 } else {
-    try {
-        $adelegDir = "$env:TEMP\ADeleg"
-        New-Item -ItemType Directory -Path $adelegDir -Force | Out-Null
-        Invoke-WebRequest -Uri "https://github.com/mtth-bfft/adeleg/releases/latest/download/adeleg.exe" -OutFile "$adelegDir\adeleg.exe" -UseBasicParsing -ErrorAction Stop
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
-        $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
-        Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
-        Write-Host "[ OK ]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
-    } catch {
-        Write-Host "[ -- ]   ADeleginator failed: $_" -ForegroundColor DarkYellow
+    if (-not $onlineToolsAvailable) {
+        Write-Host "[ -- ]   ADeleginator skipped (no connection possible)" -ForegroundColor DarkGray
+    } else {
+        try {
+            $adelegDir = "$env:TEMP\ADeleg"
+            New-Item -ItemType Directory -Path $adelegDir -Force | Out-Null
+            Invoke-WebRequest -Uri "https://github.com/mtth-bfft/adeleg/releases/latest/download/adeleg.exe" -OutFile "$adelegDir\adeleg.exe" -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ADeleginator/main/Invoke-ADeleginator.ps1" -OutFile "$adelegDir\Invoke-ADeleginator.ps1" -UseBasicParsing -ErrorAction Stop
+            $cmd = "Set-Location '$adelegDir'; . '$adelegDir\Invoke-ADeleginator.ps1'; Invoke-ADeleginator *>&1 | Where-Object { `$_ -notmatch 'Go, go|ADeleginator|diddle|by: Spencer|____' } | Out-File '$OUT\adeleginator.txt' -Encoding utf8"
+            Start-Process powershell -ArgumentList "-NoProfile -Command `"$cmd`"" -WindowStyle Hidden -Wait
+            Write-Host "[ OK ]   ADeleginator -> adeleginator.txt" -ForegroundColor Green
+        } catch {
+            Write-Host "[ -- ]   ADeleginator failed: $_" -ForegroundColor DarkYellow
+        }
     }
-}
+}    
 
 # ScriptSentry
-if (-not $onlineToolsAvailable) {
-    Write-Host "[ -- ]   ScriptSentry skipped (no connection possible)" -ForegroundColor DarkGray
+if (-not $isDomainJoined) {
+    Write-Host "[ -- ]   ScriptSentry skipped (not domain-joined)" -ForegroundColor DarkGray
 } else {
-    try {
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1" -OutFile "$env:TEMP\ScriptSentry.ps1" -UseBasicParsing -ErrorAction Stop
-        . "$env:TEMP\ScriptSentry.ps1"
-        $ssOutput = Invoke-ScriptSentry -ErrorAction SilentlyContinue 2>&1
-        $ssOutput | Where-Object { $_ -notmatch "GetCurrentForest|0x80005000|FindOne|Unknown error" } | Out-File "$OUT\scriptsentry.txt" -Encoding utf8
-        Write-Host "[ OK ]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
-    } catch {
-        Write-Host "[ -- ]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
+    if (-not $onlineToolsAvailable) {
+        Write-Host "[ -- ]   ScriptSentry skipped (no connection possible)" -ForegroundColor DarkGray
+    } else {
+        try {
+            Invoke-WebRequest -Uri "https://raw.githubusercontent.com/techspence/ScriptSentry/main/Invoke-ScriptSentry.ps1" -OutFile "$env:TEMP\ScriptSentry.ps1" -UseBasicParsing -ErrorAction Stop
+            . "$env:TEMP\ScriptSentry.ps1"
+            $ssOutput = Invoke-ScriptSentry -ErrorAction SilentlyContinue 2>&1
+            $ssOutput | Where-Object { $_ -notmatch "GetCurrentForest|0x80005000|FindOne|Unknown error" } | Out-File "$OUT\scriptsentry.txt" -Encoding utf8
+            Write-Host "[ OK ]   ScriptSentry -> scriptsentry.txt" -ForegroundColor Green
+        } catch {
+            Write-Host "[ -- ]   ScriptSentry failed: $_" -ForegroundColor DarkYellow
+        }
     }
 }
 
