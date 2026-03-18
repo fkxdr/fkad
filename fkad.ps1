@@ -676,6 +676,25 @@ if ($interesting.Count -gt 0) {
     Write-Host "[ OK ]   DNS cache contains only known domains" -ForegroundColor Green
 }
 
+# LLMNR
+$llmnr = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableMulticast" -ErrorAction SilentlyContinue).EnableMulticast
+if ($llmnr -eq 0) {
+    Write-Host "[ OK ]   LLMNR is disabled" -ForegroundColor Green
+} else {
+    Write-Host "[P146]   LLMNR is enabled (Responder poisoning possible)" -ForegroundColor DarkRed
+}
+
+# NetBIOS over TCP/IP
+$interfaces = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces"
+$nbEnabled = $interfaces | Where-Object {
+    (Get-ItemProperty $_.PSPath).NetbiosOptions -ne 2
+}
+if ($nbEnabled.Count -eq 0) {
+    Write-Host "[ OK ]   NetBIOS over TCP/IP disabled on all interfaces" -ForegroundColor Green
+} else {
+    Write-Host "[P147]   NetBIOS over TCP/IP enabled on $($nbEnabled.Count) interface(s)" -ForegroundColor DarkRed
+}
+
 # Scheduled Tasks (filtered)
 $allTasks = Get-ScheduledTask
 $suspicious = @()
@@ -699,7 +718,7 @@ foreach ($task in $allTasks) {
 }
 if ($suspicious.Count -gt 0) {
     $suspicious | Out-File "$OUT\scheduled_tasks.txt" -Encoding utf8
-    Write-Host "[P147]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
+    Write-Host "[P149]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
 } else {
     Write-Host "[ OK ]   No suspicious scheduled tasks found" -ForegroundColor Green
 }
