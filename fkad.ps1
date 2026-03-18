@@ -695,12 +695,12 @@ if ($loggedUsers.Count -gt 1) {
 try {
     $rid500 = Get-LocalUser | Where-Object { $_.SID -match '-500$' }
     if ($rid500.Enabled) {
-        Write-Host "          - [P146] Default Administrator account (RID 500) is enabled: $($rid500.Name)" -ForegroundColor DarkRed
+        Write-Host "[P150]   Default Administrator account (RID 500) is enabled: $($rid500.Name)" -ForegroundColor DarkRed
     } else {
-        Write-Host "          - Default Administrator account (RID 500) is disabled" -ForegroundColor Green
+        Write-Host "[ OK ]   Default Administrator account (RID 500) is disabled" -ForegroundColor Green
     }
 } catch {
-    Write-Host "          - Default Administrator account (RID 500) status unknown" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   Default Administrator account (RID 500) status unknown" -ForegroundColor DarkYellow
 }
 
 # DNS Cache
