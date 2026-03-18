@@ -634,6 +634,27 @@ if ($instances) {
 
 Write-Host ""
 
+# LLMNR
+$llmnr = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableMulticast" -ErrorAction SilentlyContinue).EnableMulticast
+if ($llmnr -eq 0) {
+    Write-Host "[ OK ]   LLMNR is disabled" -ForegroundColor Green
+} else {
+    Write-Host "[P140]   LLMNR is enabled (Responder poisoning possible)" -ForegroundColor DarkRed
+}
+
+# NetBIOS over TCP/IP
+$interfaces = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces"
+$nbEnabled = $interfaces | Where-Object {
+    (Get-ItemProperty $_.PSPath).NetbiosOptions -ne 2
+}
+if ($nbEnabled.Count -eq 0) {
+    Write-Host "[ OK ]   NetBIOS over TCP/IP disabled on all interfaces" -ForegroundColor Green
+} else {
+    Write-Host "[P141]   NetBIOS over TCP/IP enabled on $($nbEnabled.Count) interface(s)" -ForegroundColor DarkRed
+}
+
+Write-Host ""
+
 # Admins and logged on users
 $adminRaw = net localgroup administrators 2>$null
 if (-not $adminRaw) { $adminRaw = net localgroup administratoren 2>$null }
@@ -655,7 +676,19 @@ $combined += $loggedUsers
 $combined | Out-File "$OUT\users_and_admins.txt" -Encoding utf8
 Write-Host "[ OK ]   Users & Admins -> users_and_admins.txt" -ForegroundColor Green
 if ($loggedUsers.Count -gt 1) {
-    Write-Host "           - [P140] Multiple users are logged on" -ForegroundColor DarkRed
+    Write-Host "           - [P145] Multiple users are logged on" -ForegroundColor DarkRed
+}
+
+# Default Administrator Account (RID 500)
+try {
+    $rid500 = Get-LocalUser | Where-Object { $_.SID -match '-500$' }
+    if ($rid500.Enabled) {
+        Write-Host "          - [P146] Default Administrator account (RID 500) is enabled: $($rid500.Name)" -ForegroundColor DarkRed
+    } else {
+        Write-Host "          - Default Administrator account (RID 500) is disabled" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "          - Default Administrator account (RID 500) status unknown" -ForegroundColor DarkYellow
 }
 
 # DNS Cache
@@ -671,28 +704,9 @@ foreach ($block in $blocks) {
 }
 if ($interesting.Count -gt 0) {
     $interesting | Out-File "$OUT\dns_cache.txt" -Encoding utf8
-    Write-Host "[P145]   $($interesting.Count) unknown DNS cache entries -> dns_cache.txt" -ForegroundColor DarkRed
+    Write-Host "[P147]   $($interesting.Count) unknown DNS cache entries -> dns_cache.txt" -ForegroundColor DarkRed
 } else {
     Write-Host "[ OK ]   DNS cache contains only known domains" -ForegroundColor Green
-}
-
-# LLMNR
-$llmnr = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableMulticast" -ErrorAction SilentlyContinue).EnableMulticast
-if ($llmnr -eq 0) {
-    Write-Host "[ OK ]   LLMNR is disabled" -ForegroundColor Green
-} else {
-    Write-Host "[P146]   LLMNR is enabled (Responder poisoning possible)" -ForegroundColor DarkRed
-}
-
-# NetBIOS over TCP/IP
-$interfaces = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces"
-$nbEnabled = $interfaces | Where-Object {
-    (Get-ItemProperty $_.PSPath).NetbiosOptions -ne 2
-}
-if ($nbEnabled.Count -eq 0) {
-    Write-Host "[ OK ]   NetBIOS over TCP/IP disabled on all interfaces" -ForegroundColor Green
-} else {
-    Write-Host "[P147]   NetBIOS over TCP/IP enabled on $($nbEnabled.Count) interface(s)" -ForegroundColor DarkRed
 }
 
 # Scheduled Tasks (filtered)
@@ -718,7 +732,7 @@ foreach ($task in $allTasks) {
 }
 if ($suspicious.Count -gt 0) {
     $suspicious | Out-File "$OUT\scheduled_tasks.txt" -Encoding utf8
-    Write-Host "[P149]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
+    Write-Host "[P148]   $($suspicious.Count) suspicious scheduled task(s) -> scheduled_tasks.txt" -ForegroundColor DarkRed
 } else {
     Write-Host "[ OK ]   No suspicious scheduled tasks found" -ForegroundColor Green
 }
