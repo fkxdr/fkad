@@ -564,6 +564,18 @@ else
   echo -e "${GREEN}[OK] NTLMv1 disabled${NC}"
 fi
 
+# SMBv1
+SMBV1_HOSTS=$(nxc smb $SCAN_TARGETS_STR -u "$AD_USER" -p "$PASSWORD" -M smbv1 2>/dev/null | grep "SMBv1 enabled" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+SMBV1_COUNT=$(echo "$SMBV1_HOSTS" | grep -v "^$" | wc -l)
+if [ "$SMBV1_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $SMBV1_COUNT host(s) with SMBv1 enabled${NC}"
+  echo "$SMBV1_HOSTS" | while read -r host; do
+    echo -e "${RED}       └─ $host${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] SMBv1 disabled on scanned hosts${NC}"
+fi
+
 # Scan scope for relay targets (exclude DCs)
 SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
 > "$OUTPUT_DIR/relay_targets_raw.txt"
@@ -721,6 +733,20 @@ else
   else
     echo -e "${GREEN}[OK] NTLMv2 LDAP Signing + LDAPS Channel Binding enforced${NC}"
   fi
+fi
+
+# LDAP Anonymous Bind
+ANON_BIND=$(ldapsearch -x -H ldap://$DC_IP -b "$DOMAIN_DN" "(objectClass=domain)" dn 2>/dev/null | grep -c "^dn:")
+DS_HEURISTICS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,$DOMAIN_DN" \
+  "(objectClass=*)" dsHeuristics 2>/dev/null | grep "^dsHeuristics:" | awk '{print $2}')
+if [ "$ANON_BIND" -gt 0 ]; then
+  echo -e "${RED}[KO] LDAP anonymous bind successful — unauthenticated enumeration possible${NC}"
+  echo -e "${GREY}       └─ ldapsearch -x -H ldap://$DC_IP -b '$DOMAIN_DN' '(objectClass=user)'${NC}"
+elif [ ! -z "$DS_HEURISTICS" ] && [ "${DS_HEURISTICS:6:1}" = "2" ]; then
+  echo -e "${RED}[KO] dsHeuristics indicates anonymous access enabled (char 7 = 2)${NC}"
+else
+  echo -e "${GREEN}[OK] LDAP anonymous bind disabled${NC}"
 fi
 
 echo ""
@@ -1509,7 +1535,6 @@ fi
 for target in "${SCAN_TARGETS[@]}"; do
   nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null | grep -E "READ|WRITE" >> "$OUTPUT_DIR/smb_shares.txt"
 done
-
 READABLE=0
 [ -f "$OUTPUT_DIR/smb_shares.txt" ] && READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" | tr -d ' \n')
 if [ "$READABLE" -gt 0 ]; then
@@ -1517,6 +1542,17 @@ if [ "$READABLE" -gt 0 ]; then
 else
   echo -e "${GREEN}[OK] No readable/writable shares found across all scope targets${NC}"
 fi
+
+# SMB Guest Access
+GUEST_ACCESS=$(nxc smb $SCAN_TARGETS_STR -u '' -p '' --shares 2>/dev/null | grep -E "READ|WRITE")
+GUEST_COUNT=$(echo "$GUEST_ACCESS" | grep -v "^$" | wc -l)
+if [ "$GUEST_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $GUEST_COUNT share(s) accessible via null/guest session → guest_shares.txt${NC}"
+  echo "$GUEST_ACCESS" > "$OUTPUT_DIR/guest_shares.txt"
+else
+  echo -e "${GREEN}[OK] No shares accessible via null/guest session${NC}"
+fi
+
 
 # Manspider against readable SMB Shares
 if [ "$BH_MODE" != "DCOnly" ]; then
