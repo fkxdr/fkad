@@ -49,6 +49,10 @@ if ! command -v gowitness &>/dev/null; then
   echo -e "${GREY}[--] gowitness not found — screenshots will be skipped${NC}"
 fi
 
+if ! command -v swaks &>/dev/null; then
+  echo -e "${GREY}[--] swaks not found — open relay check will be skipped${NC}"
+fi
+
 if ! command -v manspider &>/dev/null && [ ! -x "/root/.local/bin/manspider" ]; then
   echo -e "${GREY}[--] manspider not found — SMB content scan will be skipped${NC}"
 fi
@@ -233,7 +237,7 @@ fi
 
 echo ""
 
-# ADCS/PKI Vulnerabilities
+# CA on DC check
 if [ -x "/opt/tools/Certipy/venv/bin/certipy" ]; then
   CERTIPY_CMD="/opt/tools/Certipy/venv/bin/certipy"
 elif command -v certipy &> /dev/null; then
@@ -244,6 +248,48 @@ else
   CERTIPY_CMD=""
 fi
 
+if [ ! -z "$CERTIPY_CMD" ]; then
+  CA_HOSTS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+    -b "CN=Enrollment Services,CN=Public Key Services,CN=Services,CN=Configuration,$DOMAIN_DN" \
+    "(objectClass=pKIEnrollmentService)" dNSHostName 2>/dev/null | \
+    grep "^dNSHostName:" | awk '{print tolower($2)}')
+  if [ ! -z "$CA_HOSTS" ]; then
+    CA_ON_DC=0
+    CA_ON_DC_LIST=""
+    if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 0 ]; then
+      while IFS=: read -r dc_fqdn dc_ip_iter; do
+        dc_fqdn_lower=$(echo "$dc_fqdn" | tr '[:upper:]' '[:lower:]')
+        while read -r ca_host; do
+          if [ "$ca_host" = "$dc_fqdn_lower" ]; then
+            CA_ON_DC=$((CA_ON_DC + 1))
+            CA_ON_DC_LIST="${CA_ON_DC_LIST}${ca_host}\n"
+          fi
+        done <<< "$CA_HOSTS"
+      done < "$OUTPUT_DIR/all_dcs.txt"
+    else
+      dc_fqdn_lower=$(echo "$DC_FQDN" | tr '[:upper:]' '[:lower:]')
+      while read -r ca_host; do
+        if [ "$ca_host" = "$dc_fqdn_lower" ]; then
+          CA_ON_DC=$((CA_ON_DC + 1))
+          CA_ON_DC_LIST="${CA_ON_DC_LIST}${ca_host}\n"
+        fi
+      done <<< "$CA_HOSTS"
+    fi
+    if [ "$CA_ON_DC" -gt 0 ]; then
+      echo -e "${RED}[KO] CA installed on Domain Controller — increases ESC8 and coercion impact${NC}"
+      echo -e "$CA_ON_DC_LIST" | while read -r host; do
+        [ -z "$host" ] && continue
+        echo -e "${RED}       └─ $host${NC}"
+      done
+    else
+      echo -e "${GREEN}[OK] CA not installed on any Domain Controller${NC}"
+    fi
+  else
+    echo -e "${GREY}[--] No CA enrollment services found${NC}"
+  fi
+fi
+
+# ADCS/PKI Vulnerabilities
 if [ ! -z "$CERTIPY_CMD" ]; then
   cd "$OUTPUT_DIR"
   $CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -timeout 5 &>/dev/null
@@ -1491,7 +1537,7 @@ else
   echo -e "${GREEN}[OK] No Foreign Security Principals${NC}"
 fi
 
-# Email Security (SPF/DMARC)
+# Email Security SPF/DMARC, Open Relay
 if [[ "$DOMAIN" == *.local || "$DOMAIN" == *.htb ]]; then
   echo -e "${GREY}[--] SPF and DMARC skipped (.local domain is internal only)${NC}"
 else
@@ -1511,7 +1557,17 @@ else
   else
     echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
   fi
+  if command -v swaks &>/dev/null && [ ! -z "$MX_SERVER" ]; then
+    OPEN_RELAY=$(swaks --to test@gmail.com --from ceo@$DOMAIN --server $MX_SERVER --timeout 10 --quit-after RCPT 2>&1)
+    if echo "$OPEN_RELAY" | grep -q "^-> RCPT" && echo "$OPEN_RELAY" | grep -q "^<-  250"; then
+      echo -e "${RED}[KO] Open Relay detected on $MX_SERVER${NC}"
+      echo -e "${GREY}       └─ swaks --to target@victim.com --from ceo@$DOMAIN --server $MX_SERVER${NC}"
+    else
+      echo -e "${GREEN}[OK] No Open Relay on $MX_SERVER${NC}"
+    fi
+  fi
 fi
+
 
 # GoWitness
 echo ""
