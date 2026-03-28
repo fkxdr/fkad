@@ -749,6 +749,15 @@ else
   echo -e "${GREEN}[OK] LDAP anonymous bind disabled${NC}"
 fi
 
+# Plain LDAP without TLS enforcement
+PLAIN_LDAP=$(ldapsearch -x -H ldap://$DC_IP -b "" -s base supportedCapabilities 2>/dev/null | grep -c "dn:")
+if [ "$PLAIN_LDAP" -gt 0 ]; then
+  echo -e "${RED}[KO] Plain LDAP (port 389) accessible — traffic may be unencrypted${NC}"
+else
+  echo -e "${GREEN}[OK] Plain LDAP not accessible without TLS${NC}"
+fi
+
+
 echo ""
 
 # Create domain_users.txt
@@ -829,20 +838,21 @@ if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
   GMSA_READABLE=$(echo "$GMSA_OUTPUT" | grep "Account:" | grep -v "no read permissions" | wc -l)
   if [ "$GMSA_READABLE" -gt 0 ]; then
     echo -e "${RED}[KO] $GMSA_TOTAL gMSA account(s) found — $GMSA_READABLE readable → gmsa_readable.txt${NC}"
+    echo "$GMSA_OUTPUT" | grep "Account:" | grep -v "no read permissions" | while read -r line; do
+      GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
+      GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K.*?(?=\s{2,})')
+      echo -e "${RED}       └─ $GMSA_NAME (NT: $GMSA_HASH)${NC}"
+    done
   else
-    echo -e "${GREEN}[OK] $GMSA_TOTAL gMSA account(s) found — none readable by current user${NC}"
+    echo -e "${GREEN}[OK] $GMSA_TOTAL gMSA account(s) not readable by user → gmsa_readable.txt${NC}"
   fi
   echo "$GMSA_OUTPUT" | grep "Account:" | while read -r line; do
     GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
     GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K.*?(?=\s{2,})')
+    GMSA_PRINCIPALS=$(echo "$line" | grep -oP 'PrincipalsAllowedToReadPassword: \K.*')
     [ -z "$GMSA_HASH" ] && GMSA_HASH="not readable"
-    if [ "$GMSA_HASH" = "not readable" ]; then
-      echo -e "${GREY}       └─ $GMSA_NAME (not readable)${NC}"
-    else
-      echo -e "${RED}       └─ $GMSA_NAME (NT: $GMSA_HASH)${NC}"
-    fi
-  done
-  echo "$GMSA_OUTPUT" | grep "Account:" > "$OUTPUT_DIR/gmsa_readable.txt"
+    echo "$GMSA_NAME | NT: $GMSA_HASH | Allowed: $GMSA_PRINCIPALS"
+  done > "$OUTPUT_DIR/gmsa_readable.txt"
 else
   echo -e "${GREEN}[OK] No gMSA accounts found${NC}"
 fi
@@ -1399,6 +1409,25 @@ if echo "$GPP_OUTPUT" | grep -q "Found credentials in"; then
   echo "$GPP_OUTPUT" | grep "Found credentials in" > "$OUTPUT_DIR/gpp_passwords.txt"
 else
   echo -e "${GREEN}[OK] No GPP passwords found${NC}"
+fi
+
+# Sensitive AD attributes (cleartext passwords in LDAP)
+SENSITIVE_ATTRS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" \
+  "(|(userPassword=*)(unixUserPassword=*)(msSFU30Password=*))" \
+  sAMAccountName userPassword unixUserPassword msSFU30Password 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+SENSITIVE_COUNT=$(echo "$SENSITIVE_ATTRS" | grep -v "^$" | wc -l)
+if [ "$SENSITIVE_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $SENSITIVE_COUNT account(s) with cleartext password in LDAP attributes → sensitive_attrs.txt${NC}"
+  echo "$SENSITIVE_ATTRS" | while read -r account; do
+    echo -e "${RED}       └─ $account${NC}"
+  done
+  ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+    -b "$DOMAIN_DN" \
+    "(|(userPassword=*)(unixUserPassword=*)(msSFU30Password=*))" \
+    sAMAccountName userPassword unixUserPassword msSFU30Password 2>/dev/null > "$OUTPUT_DIR/sensitive_attrs.txt"
+else
+  echo -e "${GREEN}[OK] No cleartext passwords in LDAP attributes${NC}"
 fi
 
 echo ""
