@@ -825,16 +825,26 @@ fi
 # gMSA readable
 GMSA_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --gmsa 2>/dev/null)
 if echo "$GMSA_OUTPUT" | grep -q "Account:"; then
-  GMSA_COUNT=$(echo "$GMSA_OUTPUT" | grep -c "Account:")
-  echo -e "${RED}[KO] $GMSA_COUNT readable gMSA account(s) found → gmsa_readable.txt${NC}"
+  GMSA_TOTAL=$(echo "$GMSA_OUTPUT" | grep -c "Account:")
+  GMSA_READABLE=$(echo "$GMSA_OUTPUT" | grep "Account:" | grep -v "no read permissions" | wc -l)
+  if [ "$GMSA_READABLE" -gt 0 ]; then
+    echo -e "${RED}[KO] $GMSA_TOTAL gMSA account(s) found — $GMSA_READABLE readable → gmsa_readable.txt${NC}"
+  else
+    echo -e "${GREEN}[OK] $GMSA_TOTAL gMSA account(s) found — none readable by current user${NC}"
+  fi
   echo "$GMSA_OUTPUT" | grep "Account:" | while read -r line; do
     GMSA_NAME=$(echo "$line" | grep -oP 'Account: \K\S+')
-    GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K\S+')
-  echo -e "${RED}       └─ $GMSA_NAME (NT: $GMSA_HASH)${NC}"
+    GMSA_HASH=$(echo "$line" | grep -oP 'NTLM: \K.*?(?=\s{2,})')
+    [ -z "$GMSA_HASH" ] && GMSA_HASH="not readable"
+    if [ "$GMSA_HASH" = "not readable" ]; then
+      echo -e "${GREY}       └─ $GMSA_NAME (not readable)${NC}"
+    else
+      echo -e "${RED}       └─ $GMSA_NAME (NT: $GMSA_HASH)${NC}"
+    fi
   done
   echo "$GMSA_OUTPUT" | grep "Account:" > "$OUTPUT_DIR/gmsa_readable.txt"
 else
-  echo -e "${GREEN}[OK] No readable gMSA accounts${NC}"
+  echo -e "${GREEN}[OK] No gMSA accounts found${NC}"
 fi
 
 # BloodHound
