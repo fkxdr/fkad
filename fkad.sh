@@ -276,7 +276,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
       done <<< "$CA_HOSTS"
     fi
     if [ "$CA_ON_DC" -gt 0 ]; then
-      echo -e "${RED}[KO] CA installed on Domain Controller — increases ESC8 and coercion impact${NC}"
+      echo -e "${RED}[KO] CA installed on Domain Controller${NC}"
       echo -e "$CA_ON_DC_LIST" | while read -r host; do
         [ -z "$host" ] && continue
         echo -e "${RED}       └─ $host${NC}"
@@ -528,7 +528,7 @@ if [ ! -z "$COERCE_METHODS" ]; then
   if [ ! -z "$NON_DC_UNCON" ]; then
     echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
   fi
-  PREFERRED_ORDER=("PrinterBug" "PetitPotam" "DFSCoerce" "ShadowCoerce" "MSEven")
+  PREFERRED_ORDER=("PetitPotam" "PrinterBug" "DFSCoerce" "ShadowCoerce" "MSEven")
     FIRST_COERCE=""
     for method in "${PREFERRED_ORDER[@]}"; do
       if echo "$COERCE_METHODS" | grep -q "$method"; then
@@ -798,7 +798,7 @@ fi
 # Plain LDAP without TLS enforcement
 PLAIN_LDAP=$(ldapsearch -x -H ldap://$DC_IP -b "" -s base supportedCapabilities 2>/dev/null | grep -c "dn:")
 if [ "$PLAIN_LDAP" -gt 0 ]; then
-  echo -e "${RED}[KO] Plain LDAP (port 389) accessible — traffic may be unencrypted${NC}"
+  echo -e "${RED}[KO] Plain LDAP (port 389) is accessible, intercepted responder traffic may be unencrypted${NC}"
 else
   echo -e "${GREEN}[OK] Plain LDAP not accessible without TLS${NC}"
 fi
