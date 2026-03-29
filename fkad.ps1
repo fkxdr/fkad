@@ -1184,6 +1184,26 @@ if (-not $onlineToolsAvailable) {
     Write-Host "[ OK ]   Agent Ransack setup started (manual steps required, see other terminal window)" -ForegroundColor Green
 }
 
+# DLLHijackHunter
+if (-not $onlineToolsAvailable) {
+    Write-Host "[ -- ]   DLLHijackHunter skipped (no connection possible)" -ForegroundColor DarkGray
+} else {
+    try {
+        $dllhExe = "$env:TEMP\DLLHijackHunter.exe"
+        $dllhHtml = "$OUT\DLLHijackHunter.html"
+        Invoke-WebRequest -Uri "https://github.com/ghostvectoracademy/DLLHijackHunter/releases/download/v2.3.0/DLLHijackHunter.exe" -OutFile $dllhExe -UseBasicParsing -ErrorAction Stop
+        $dllhProfile = if ($isAdmin) { "redteam" } else { "safe" }
+        Start-Process -FilePath $dllhExe -ArgumentList "--profile $dllhProfile --format html --output `"$dllhHtml`"" -Wait -NoNewWindow
+        if (Test-Path $dllhHtml) {
+            Write-Host "[ OK ]   DLLHijackHunter ($dllhProfile) -> DLLHijackHunter.html" -ForegroundColor Green
+        } else {
+            Write-Host "[ -- ]   DLLHijackHunter ran but produced no output" -ForegroundColor DarkYellow
+        }
+    } catch {
+        Write-Host "[ -- ]   DLLHijackHunter failed: $_" -ForegroundColor DarkYellow
+    }
+}
+
 Write-Host ""
 Write-Host "Done. Output folder: $OUT" -ForegroundColor DarkGray
 $lines = @(
