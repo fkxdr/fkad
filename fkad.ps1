@@ -1228,8 +1228,9 @@ if (-not $onlineToolsAvailable) {
         $dllhExe = "$env:TEMP\DLLHijackHunter.exe"
         $dllhOut = "$OUT\DLLHijackHunter.html"
         Invoke-WebRequest -Uri "https://github.com/ghostvectoracademy/DLLHijackHunter/releases/download/v2.3.0/DLLHijackHunter.exe" -OutFile $dllhExe -UseBasicParsing -ErrorAction Stop
-        $dllhProfile = if ($isAdmin) { "redteam" } else { "safe" }
-        Start-Process -FilePath $dllhExe -ArgumentList "--profile $dllhProfile --format html --output `"$dllhOut`"" -Wait -WindowStyle Hidden
+        $dllhProfile = if ($isAdmin) { "redteam" } else { "strict" }
+        $dllhArgs    = if ($isAdmin) { "--profile redteam --format html --output `"$dllhOut`"" } else { "--profile strict --no-canary --format html --output `"$dllhOut`"" }
+        Start-Process -FilePath $dllhExe -ArgumentList $dllhArgs -Wait -WindowStyle Hidden
         if (Test-Path $dllhOut) {
             Write-Host "[ OK ]   DLLHijackHunter ($dllhProfile) -> DLLHijackHunter.html" -ForegroundColor Green
         } else {
