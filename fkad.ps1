@@ -635,6 +635,18 @@ if ($llmnr -eq 0) {
     Write-Host "[P140]   LLMNR is enabled (Responder poisoning possible)" -ForegroundColor DarkRed
 }
 
+# mDNS
+try {
+    $mDNS = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "EnableMDNS" -ErrorAction Stop).EnableMDNS
+    if ($mDNS -eq 0) {
+        Write-Host "[ OK ]   mDNS is disabled" -ForegroundColor Green
+    } else {
+        Write-Host "[P141]   mDNS is enabled (mDNS Poisoning possible)" -ForegroundColor DarkRed
+    }
+} catch {
+    Write-Host "[P141]   mDNS is enabled (mDNS Poisoning possible)" -ForegroundColor DarkRed
+}
+
 # NetBIOS over TCP/IP
 $interfaces = Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces"
 $nbEnabled = $interfaces | Where-Object {
@@ -643,19 +655,7 @@ $nbEnabled = $interfaces | Where-Object {
 if ($nbEnabled.Count -eq 0) {
     Write-Host "[ OK ]   NetBIOS over TCP/IP disabled on all interfaces" -ForegroundColor Green
 } else {
-    Write-Host "[P141]   NetBIOS over TCP/IP enabled on $($nbEnabled.Count) interface(s)" -ForegroundColor DarkRed
-}
-
-# mDNS
-try {
-    $mDNS = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "EnableMDNS" -ErrorAction Stop).EnableMDNS
-    if ($mDNS -eq 0) {
-        Write-Host "[ OK ]   mDNS is disabled" -ForegroundColor Green
-    } else {
-        Write-Host "[P142]   mDNS is enabled (mDNS Poisoning possible)" -ForegroundColor DarkRed
-    }
-} catch {
-    Write-Host "[P142]   mDNS is enabled (not configured, default is enabled)" -ForegroundColor DarkRed
+    Write-Host "[P142]   NetBIOS over TCP/IP enabled on $($nbEnabled.Count) interface(s)" -ForegroundColor DarkRed
 }
 
 # Null Session
