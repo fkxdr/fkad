@@ -646,6 +646,42 @@ if ($nbEnabled.Count -eq 0) {
     Write-Host "[P141]   NetBIOS over TCP/IP enabled on $($nbEnabled.Count) interface(s)" -ForegroundColor DarkRed
 }
 
+# mDNS
+try {
+    $mDNS = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "EnableMDNS" -ErrorAction Stop).EnableMDNS
+    if ($mDNS -eq 0) {
+        Write-Host "[ OK ]   mDNS is disabled" -ForegroundColor Green
+    } else {
+        Write-Host "[P142]   mDNS is enabled (mDNS Poisoning possible)" -ForegroundColor DarkRed
+    }
+} catch {
+    Write-Host "[P142]   mDNS is enabled (not configured, default is enabled)" -ForegroundColor DarkRed
+}
+
+# Null Session
+try {
+    $lsa = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" -ErrorAction Stop
+    $restrictAnon    = $lsa.RestrictAnonymous
+    $restrictSAM     = $lsa.RestrictAnonymousSAM
+    $everyoneIsAnon  = $lsa.EveryoneIncludesAnonymous
+
+    $nullSessionIssues = @()
+    if ($restrictAnon -ne 1)   { $nullSessionIssues += "RestrictAnonymous=$restrictAnon (should be 1)" }
+    if ($restrictSAM -ne 1)    { $nullSessionIssues += "RestrictAnonymousSAM=$restrictSAM (should be 1)" }
+    if ($everyoneIsAnon -ne 0) { $nullSessionIssues += "EveryoneIncludesAnonymous=$everyoneIsAnon (should be 0)" }
+
+    if ($nullSessionIssues.Count -gt 0) {
+        Write-Host "[P143]   Null Session Authentication not fully restricted" -ForegroundColor DarkRed
+        foreach ($issue in $nullSessionIssues) {
+            Write-Host "          - $issue" -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host "[ OK ]   Null Session Authentication restricted" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[ -- ]   Null Session check failed: $_" -ForegroundColor DarkYellow
+}
+
 Write-Host ""
 
 # Admins and logged on users
