@@ -693,9 +693,9 @@ else
   # Fallback: single DC check
   SMB_DC_CHECK=$(netexec smb $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
   if echo "$SMB_DC_CHECK" | grep -q "signing:True"; then
-    echo -e "${GREEN}[OK] NTLMv2 SMB Signing required on DC${NC}"
+    echo -e "${GREEN}[OK] SMB Signing required on DC${NC}"
   else
-    echo -e "${RED}[KO] NTLMv2 SMB Signing NOT required on DC${NC}"
+    echo -e "${RED}[KO] SMB Signing NOT required on DC${NC}"
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${RED}       └─ Exploitable: Coerce DC to non-DC relay targets${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
