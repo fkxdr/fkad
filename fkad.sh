@@ -256,11 +256,6 @@ if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
   rm "$OUTPUT_DIR/relay_targets_raw.txt"
 fi
 RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
-if [ "$RELAY_COUNT" -gt 0 ]; then
-  echo -e "${GREY}[*] Found $RELAY_COUNT non-DC relay target(s) without SMB Signing → relay_targets.txt${NC}"
-else
-  echo -e "${GREY}[*] No non-DC relay targets without SMB Signing found${NC}"
-fi
 
 echo ""
 
@@ -403,18 +398,18 @@ if [ ! -z "$CERTIPY_CMD" ]; then
 
             if [ "$CA_HTTP_CODE" != "000" ] && [ ! -z "$CA_HTTP_CODE" ]; then
               if echo "$CA_NTLM_HEADER" | grep -qi "NTLM\|Negotiate"; then
-                echo -e "${RED}          └─ /certsrv/ reachable + NTLM confirmed — directly exploitable${NC}"
+                echo -e "${RED}       └─ /certsrv/ reachable + NTLM confirmed — directly exploitable${NC}"
               else
-                echo -e "${GREY}          └─ /certsrv/ reachable (HTTP $CA_HTTP_CODE) but no NTLM header${NC}"
+                echo -e "${GREY}       └─ /certsrv/ reachable (HTTP $CA_HTTP_CODE) but no NTLM header${NC}"
               fi
             else
-              echo -e "${GREY}          └─ /certsrv/ not reachable from this host — pivot may be required${NC}"
+              echo -e "${GREY}       └─ /certsrv/ not reachable from this host — pivot may be required${NC}"
             fi
 
             if [ ! -z "$WEBCLIENT_HOSTS" ]; then
-              echo -e "${RED}          └─ WebClient hosts present — HTTP coercion → ESC8 chain viable${NC}"
+              echo -e "${RED}       └─ WebClient hosts present — HTTP coercion → ESC8 chain viable${NC}"
               echo "$WEBCLIENT_HOSTS" | while read -r wc_host; do
-                echo -e "${GREY}             Coerce: $wc_host → relay to http://$CA_IP/certsrv/${NC}"
+                echo -e "${GREY}          $wc_host → relay to http://$CA_IP/certsrv/${NC}"
               done
             fi
 
@@ -632,8 +627,8 @@ if [ "$WEBCLIENT_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $WEBCLIENT_COUNT host(s) with WebClient (WebDAV) running → HTTP coercion possible (SMB signing bypass)${NC}"
   echo "$WEBCLIENT_HOSTS" | while read -r host; do
     echo -e "${RED}       └─ $host${NC}"
-    echo -e "${GREY}          └─ ntlmrelayx.py -t ldap://$DC_IP --delegate-access --no-smb-server --http-port 80${NC}"
-    echo -e "${GREY}             responder -I <IF> --lm (or printerbug via HTTP: //$host@<RELAY>/x)${NC}"
+    echo -e "${GREY}          1) ntlmrelayx.py -t ldap://$DC_IP --delegate-access --no-smb-server --http-port 80${NC}"
+    echo -e "${GREY}          2) responder -I <IF> --lm (or printerbug via HTTP: //$host@<RELAY>/x)${NC}"
   done
 else
   echo -e "${GREEN}[OK] No hosts with WebClient (WebDAV) running${NC}"
