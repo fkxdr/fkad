@@ -1730,6 +1730,31 @@ else
   echo -e "${GREEN}[OK] No accessible MSSQL instances found on ${SUBNET}.0/24${NC}"
 fi
 
+# RDP 
+echo ""
+RDP_OUTPUT=""
+for target in "${SCAN_TARGETS[@]}"; do
+  RDP_OUTPUT+=$(nxc rdp "$target" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" 2>/dev/null)$'\n'
+done
+RDP_ACCESSIBLE=$(echo "$RDP_OUTPUT" | grep "\[+\]" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+RDP_COUNT=$(echo "$RDP_ACCESSIBLE" | grep -v "^$" | wc -l)
+if [ "$RDP_COUNT" -gt 0 ]; then
+  mkdir -p "$OUTPUT_DIR/rdp"
+  for target in "${SCAN_TARGETS[@]}"; do
+    nxc rdp "$target" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --screenshot --screenshot-dir "$OUTPUT_DIR/rdp/" 2>/dev/null
+  done
+  SHOT_COUNT=$(ls "$OUTPUT_DIR/rdp/"*.png 2>/dev/null | wc -l)
+  echo "$RDP_OUTPUT" | grep "\[+\]" > "$OUTPUT_DIR/accessible-rdp.txt"
+  if [ "$SHOT_COUNT" -gt 0 ]; then
+    echo -e "${RED}[KO] $RDP_COUNT host(s) with RDP accessible - $SHOT_COUNT screenshot(s) → rdp/${NC}"
+  else
+    rm -rf "$OUTPUT_DIR/rdp"
+    echo -e "${RED}[KO] $RDP_COUNT host(s) with RDP exposed → accessible-rdp.txt${NC}"
+  fi
+else
+  echo -e "${GREEN}[OK] No RDP hosts accessible${NC}"
+fi
+
 echo ""
 echo -e "${GREEN}[OK] Full report saved → Copy to host: docker cp ${CONTAINER_NAME}:${OUTPUT_DIR} ~/Downloads/${NC}"
 echo ""
