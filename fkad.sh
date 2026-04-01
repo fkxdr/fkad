@@ -22,7 +22,7 @@ echo ""
 # Check Tooling
 PREFLIGHT_FAIL=0
 
-for tool in nxc ldapsearch dig nmap showmount; do
+for tool in nxc netexec ldapsearch dig nmap showmount; do
   if ! command -v "$tool" &>/dev/null; then
     echo -e "${RED}[ERROR] Missing: $tool (not found in PATH)${NC}"
     PREFLIGHT_FAIL=1
@@ -170,7 +170,14 @@ FULL_USER="$AD_USER@$DOMAIN"
 SUBNET=$(echo "$DC_IP" | cut -d'.' -f1-3)
 PRIMARY_SUBNET="${SUBNET}.0/24"
 SCAN_TARGETS=("$PRIMARY_SUBNET")
-
+if [ "$SKIP_NEXT" -eq 1 ]; then
+  echo -e "${RED}[ERROR] -scope requires a filename argument${NC}"
+  exit 1
+fi
+if [[ "$SCOPE_FILE" == -* ]]; then
+  echo -e "${RED}[ERROR] -scope argument looks like a flag, not a filename: $SCOPE_FILE${NC}"
+  exit 1
+fi
 if [ ! -z "$SCOPE_FILE" ]; then
   if [ ! -f "$SCOPE_FILE" ]; then
     echo -e "${RED}[ERROR] Scope file not found: $SCOPE_FILE${NC}"
