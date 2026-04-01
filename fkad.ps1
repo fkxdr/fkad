@@ -44,19 +44,18 @@ Write-Host "[*]   User: $($env:USERNAME)" -ForegroundColor DarkGray
 Write-Host ""
 
 # Internet Access
+$onlineToolsAvailable = $false
 try {
-    $testReq = Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-    if ($testReq.Content -match "Firewall Authentication|You must authenticate|captive") {
+    $testGH = Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+    $testAssets = Invoke-WebRequest -Uri "https://release-assets.githubusercontent.com" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+    if ($testGH.Content -match "Firewall Authentication|You must authenticate|captive") {
         Write-Host "[ !! ]   Captive Portal detected - internet access blocked, skipping online tools" -ForegroundColor DarkYellow
-        $onlineToolsAvailable = $false
     } else {
         $onlineToolsAvailable = $true
     }
 } catch {
-    Write-Host "[ !! ]   Powershell can not access GitHub - online tools will be skipped" -ForegroundColor DarkYellow
-    $onlineToolsAvailable = $false
+    Write-Host "[ !! ]   GitHub or release-assets.githubusercontent.com not reachable - online tools will be skipped" -ForegroundColor DarkYellow
 }
-
 
 $isDomainJoined = (Get-WmiObject Win32_ComputerSystem).PartOfDomain
 if ($isDomainJoined) {
@@ -637,14 +636,18 @@ if ($llmnr -eq 0) {
 
 # mDNS
 try {
-    $mDNS = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "EnableMDNS" -ErrorAction Stop).EnableMDNS
-    if ($mDNS -eq 0) {
+    $mDNSProps = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -ErrorAction SilentlyContinue
+    $mDNS = $mDNSProps.EnableMDNS
+    if ($null -eq $mDNS) {
+        # Wert nicht gesetzt = Windows-Default = mDNS aktiv
+        Write-Host "[P141]   mDNS is enabled by default (key not set - mDNS Poisoning possible)" -ForegroundColor DarkRed
+    } elseif ($mDNS -eq 0) {
         Write-Host "[ OK ]   mDNS is disabled" -ForegroundColor Green
     } else {
         Write-Host "[P141]   mDNS is enabled (mDNS Poisoning possible)" -ForegroundColor DarkRed
     }
 } catch {
-    Write-Host "[P141]   mDNS is enabled (mDNS Poisoning possible)" -ForegroundColor DarkRed
+    Write-Host "[P141]   mDNS status check failed: $_" -ForegroundColor DarkYellow
 }
 
 # NetBIOS over TCP/IP
@@ -685,11 +688,16 @@ try {
 Write-Host ""
 
 # Admins and logged on users
-$adminRaw = net localgroup administrators 2>$null
-if (-not $adminRaw) { $adminRaw = net localgroup administratoren 2>$null }
+$adminRaw = $null
+try {
+    $adminSID = "S-1-5-32-544"
+    $adminGroupName = (Get-LocalGroup | Where-Object { $_.SID -eq $adminSID }).Name
+    $adminRaw = net localgroup $adminGroupName 2>&1
+    if ($LASTEXITCODE -ne 0) { $adminRaw = $null }
+} catch {}
 $adminMembers = $adminRaw | Select-Object -Skip 6 | Where-Object {
     $_ -notmatch "^-+$" -and
-    $_ -notmatch "The command completed" -and
+    $_ -notmatch "completed successfully|erfolgreich" -and
     $_ -notmatch "^\s*$"
 }
 $loggedOutput = query user 2>$null
@@ -697,7 +705,7 @@ $loggedUsers = $loggedOutput | Select-Object -Skip 1 | Where-Object { $_ -notmat
     $_ -replace "^>", " " -replace "\s+", " "
 }
 $combined = @()
-$combined += "=== LOCAL ADMINS ==="
+$combined += "=== LOCAL ADMINS ($adminGroupName) ==="
 $combined += $adminMembers
 $combined += ""
 $combined += "=== LOGGED ON USERS ==="
@@ -824,10 +832,15 @@ $msiResult = foreach ($m in $msis) {
     $sourceState = 'Empty'
     if ($props.InstallSource) {
         try {
-            if (Test-Path $props.InstallSource -ErrorAction Stop) { $sourceState = 'Exists' }
-            else { $sourceState = 'Missing' }
-        } catch [System.UnauthorizedAccessException] { $sourceState = 'AccessDenied' }
-        catch { $sourceState = 'Error' }
+            if (Test-Path $props.InstallSource -ErrorAction SilentlyContinue) {
+                $sourceState = 'Exists'
+            } else {
+                $acl = Get-Acl $props.InstallSource -ErrorAction SilentlyContinue
+                $sourceState = if ($null -eq $acl) { 'Missing' } else { 'AccessDenied' }
+            }
+        } catch {
+            $sourceState = 'Error'
+        }
     }
     $localWritable = $false
     $localAclText = $null
