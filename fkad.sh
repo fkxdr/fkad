@@ -45,6 +45,10 @@ if ! command -v certipy &>/dev/null && \
   echo -e "${GREY}[--] certipy not found — ADCS check will be skipped${NC}"
 fi
 
+if [ ! -f "/opt/tools/krbrelayx/dnstool.py" ]; then
+  echo -e "${GREY}[--] dnstool.py not found — ADIDNS live check will be skipped${NC}"
+fi
+
 if ! command -v gowitness &>/dev/null; then
   echo -e "${GREY}[--] gowitness not found — screenshots will be skipped${NC}"
 fi
@@ -404,8 +408,8 @@ mv "$OUTPUT_DIR"/*_Certipy.json "$OUTPUT_DIR/bloodhound/" 2>/dev/null
 # ADCS/PKI Vulnerabilities - ADCS CA Officer check
 if [ ! -z "$CERTIPY_CMD" ]; then
   CA_OFFICERS_RAW=$($CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -target $DC_FQDN -stdout 2>/dev/null | grep -A3 "ManageCa\|ManageCertificates")
-CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -vi "admin\|ManageCa\|ManageCertificates\|^--$\|BUILTIN" | grep -i "$DOMAIN\\\\" | awk '{print $NF}' | sort -u)
-if [ ! -z "$CA_DANGEROUS" ]; then
+  CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -vi "admin\|ManageCa\|ManageCertificates\|^--$\|BUILTIN\|Users" | grep -i "$DOMAIN\\\\" | awk '{print $NF}' | sort -u)
+  if [ ! -z "$CA_DANGEROUS" ]; then
     CA_COUNT=$(echo "$CA_DANGEROUS" | wc -l)
     echo -e "${RED}[KO] $CA_COUNT non-default ADCS Officier (ManageCA/ManageCertificates) principal(s) → adcs_officers.txt${NC}"
     echo "$CA_DANGEROUS" > "$OUTPUT_DIR/adcs_officers.txt"
@@ -584,26 +588,20 @@ else
 fi
 
 # Authentication Coercion & Poisoning - ADIDNS Poisoning
-ADIDNS_OUTPUT=$(dacledit.py -action read -target-dn "DC=$DOMAIN,CN=MicrosoftDNS,DC=DomainDnsZones,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
-ADIDNS_CREATECHILD=$(echo "$ADIDNS_OUTPUT" | awk '
-  /Access mask.*CreateChild/ { found=1; next }
-  found && /Trustee/ {
-    if ($0 !~ /Domain Admins|Enterprise Admins|Administrators|Local System|DnsAdmins|Enterprise Domain Controllers/) {
-      sub(/.*Trustee \(SID\)\s*:\s*/, ""); print
-    }
-    found=0
-  }
-' | sort -u)
-if [ ! -z "$ADIDNS_CREATECHILD" ]; then
-  ADIDNS_TRUSTEES=$(echo "$ADIDNS_CREATECHILD" | tr '\n' ',' | sed 's/,$//')
-  echo -e "${RED}[KO] No ADIDNS restriction for $ADIDNS_TRUSTEES (ADIDNS Poisoning)${NC}"
+ADIDNS_TEST=$(/opt/tools/krbrelayx/venv/bin/python3 /opt/tools/krbrelayx/dnstool.py -u "$DOMAIN\\$AD_USER" -p "$PASSWORD" -r "attacktest.${DOMAIN}" -a add -d 127.0.0.1 -dc-ip $DC_IP $DC_IP 2>&1)
+if echo "$ADIDNS_TEST" | grep -q "completed successfully"; then
+  ADIDNS_CLEANUP=$(/opt/tools/krbrelayx/venv/bin/python3 /opt/tools/krbrelayx/dnstool.py -u "$DOMAIN\\$AD_USER" -p "$PASSWORD" -r "attacktest.${DOMAIN}" -a ldapdelete -dc-ip $DC_IP $DC_IP 2>&1)
+  if ! echo "$ADIDNS_CLEANUP" | grep -q "completed successfully"; then
+    echo -e "${RED}[!] ADIDNS test record cleanup failed - delete manually: attacktest.${DOMAIN} on $DC_IP${NC}"
+  fi
+  echo -e "${RED}[KO] ADIDNS zone write possible (ADIDNS Poisoning)${NC}"
   if [ "$RELAY_COUNT" -gt 0 ]; then
     echo -e "${RED}       └─ ADIDNS Poisoning + NTLM Relay possible${NC}"
     echo -e "${GREY}          1) ntlmrelayx.py -tf '$OUTPUT_DIR/relay_targets.txt' -smb2support${NC}"
-    echo -e "${GREY}          2) bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <existing-fileserver01> <YOUR_IP>${NC}"
-    echo -e "${GREY}          3) Wait for auth to \\\\fileserver01\\share → relay zu non-DC Target${NC}"
+    echo -e "${GREY}          2) dnstool.py -u '$DOMAIN\\$AD_USER' -p '$PASSWORD' -r '<existing-hostname>' -a add -d <YOUR_IP> $DC_IP${NC}"
+    echo -e "${GREY}          3) Wait for auth to \\\\<hostname>\\share → relay to non-DC target${NC}"
   else
-    echo -e "${GREY}       └─ bloodyAD -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --host $DC_IP add dnsRecord <hostname> <YOUR_IP>${NC}"
+    echo -e "${GREY}       └─ dnstool.py -u '$DOMAIN\\$AD_USER' -p '$PASSWORD' -r '<hostname>.<DOMAIN>' -a add -d <YOUR_IP> $DC_IP${NC}"
   fi
 else
   echo -e "${GREEN}[OK] ADIDNS zone write access is restricted${NC}"
@@ -811,6 +809,8 @@ fi
 PLAIN_LDAP=$(ldapsearch -x -H ldap://$DC_IP -b "" -s base supportedCapabilities 2>/dev/null | grep -c "dn:")
 if [ "$PLAIN_LDAP" -gt 0 ]; then
   echo -e "${RED}[KO] LDAP port 389 is accessible, intercepted traffic may be unencrypted${NC}"
+  echo -e "${GREY}       └─ tcpdump -i eth0 -w ldap_capture.pcap port 389${NC}"
+  echo -e "${GREY}       └─ tshark -r ldap_capture.pcap -Y 'ldap' -T text${NC}"
 else
   echo -e "${GREEN}[OK] LDAP not accessible without TLS${NC}"
 fi
@@ -1172,8 +1172,7 @@ else
     if [ "$LAPS_READABLE" -gt 0 ]; then
       echo -e "${RED}[KO] LAPSv1 deployed - passwords readable by current user${NC}"
     else
-      echo -e "${GREEN}[OK] LAPSv1 deployed - passwords not readable${NC}"
-      echo -e "${GREY}       └─ LAPSv1 stores passwords in cleartext attribute${NC}"
+      echo -e "${GREEN}[OK] LAPSv1 deployed, but current user can't read any passwords${NC}"
     fi
   fi
   if [ "$LAPS_V2" -gt 0 ]; then
