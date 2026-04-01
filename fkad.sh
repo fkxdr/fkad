@@ -404,8 +404,8 @@ mv "$OUTPUT_DIR"/*_Certipy.json "$OUTPUT_DIR/bloodhound/" 2>/dev/null
 # ADCS/PKI Vulnerabilities - ADCS CA Officer check
 if [ ! -z "$CERTIPY_CMD" ]; then
   CA_OFFICERS_RAW=$($CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -target $DC_FQDN -stdout 2>/dev/null | grep -A3 "ManageCa\|ManageCertificates")
-  CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -vi "admin\|ManageCa\|ManageCertificates\|^--$\|BUILTIN" | grep -i "$DOMAIN" | awk '{print $NF}' | sort -u)
-  if [ ! -z "$CA_DANGEROUS" ]; then
+CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -vi "admin\|ManageCa\|ManageCertificates\|^--$\|BUILTIN" | grep -i "$DOMAIN\\\\" | awk '{print $NF}' | sort -u)
+if [ ! -z "$CA_DANGEROUS" ]; then
     CA_COUNT=$(echo "$CA_DANGEROUS" | wc -l)
     echo -e "${RED}[KO] $CA_COUNT non-default ADCS Officier (ManageCA/ManageCertificates) principal(s) → adcs_officers.txt${NC}"
     echo "$CA_DANGEROUS" > "$OUTPUT_DIR/adcs_officers.txt"
