@@ -404,7 +404,7 @@ mv "$OUTPUT_DIR"/*_Certipy.json "$OUTPUT_DIR/bloodhound/" 2>/dev/null
 # ADCS/PKI Vulnerabilities - ADCS CA Officer check
 if [ ! -z "$CERTIPY_CMD" ]; then
   CA_OFFICERS_RAW=$($CERTIPY_CMD find -u "$AD_USER" -p "$PASSWORD" -dc-ip $DC_IP -target $DC_FQDN -stdout 2>/dev/null | grep -A3 "ManageCa\|ManageCertificates")
-  CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -v "Domain Admins\|Enterprise Admins\|Administrators\|ManageCa\|ManageCertificates\|^--$" | grep -i "$DOMAIN" | awk '{print $NF}' | sort -u)
+  CA_DANGEROUS=$(echo "$CA_OFFICERS_RAW" | grep -vi "admin\|ManageCa\|ManageCertificates\|^--$\|BUILTIN" | grep -i "$DOMAIN" | awk '{print $NF}' | sort -u)
   if [ ! -z "$CA_DANGEROUS" ]; then
     CA_COUNT=$(echo "$CA_DANGEROUS" | wc -l)
     echo -e "${RED}[KO] $CA_COUNT non-default ADCS Officier (ManageCA/ManageCertificates) principal(s) → adcs_officers.txt${NC}"
@@ -819,12 +819,11 @@ fi
 echo ""
 
 # Create domain_users.txt
-nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --active-users > "$OUTPUT_DIR/active.txt" 2>/dev/null
-if [ -f "$OUTPUT_DIR/active.txt" ]; then
-  tail "$OUTPUT_DIR/active.txt" -n +5 | awk -F ' ' '{ print $5 }' > "$OUTPUT_DIR/domain_users.txt"
+ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
+  -b "$DOMAIN_DN" '(&(objectClass=user)(objectCategory=person)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))' sAMAccountName 2>/dev/null | grep '^sAMAccountName:' | awk '{print $2}' > "$OUTPUT_DIR/domain_users.txt"
+if [ -s "$OUTPUT_DIR/domain_users.txt" ]; then
   USER_COUNT=$(wc -l < "$OUTPUT_DIR/domain_users.txt" 2>/dev/null)
   echo -e "${GREEN}[OK] Enumerated $USER_COUNT active users → domain_users.txt${NC}"
-  rm -f "$OUTPUT_DIR/active.txt"
 else
   echo -e "${GREY}[??] Failed to enumerate users${NC}"
 fi
@@ -1412,7 +1411,7 @@ if command -v dacledit.py &>/dev/null; then
         cmd | getline maskval
         close(cmd)
         if ((maskval+0) >= 262144) {
-          if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|Local System|Cert Publishers|Pre-Windows 2000|Terminal Server|Windows Authorization|Principal Self|Everyone|Authenticated Users/) {
+          if (trustee !~ /Domain Admins|Domänen-Admins|Enterprise Admins|Organisations-Admins|Administrators|Local System|Cert Publishers|Pre-Windows 2000|Terminal Server|Windows Authorization|Principal Self|Everyone|Authenticated Users|SYSTEM|S-1-5-18|S-1-5-32-544/) {
             print trustee
           }
         }
@@ -1459,20 +1458,26 @@ SHADOW_CREDS_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWO
 SHADOW_CREDS_ACCOUNTS=$(echo "$SHADOW_CREDS_OUTPUT" | grep "^sAMAccountName:" | awk '{print $2}')
 SHADOW_CREDS_COUNT=$(echo "$SHADOW_CREDS_ACCOUNTS" | grep -v "^$" | wc -l)
 if [ "$SHADOW_CREDS_COUNT" -gt 0 ]; then
-  echo -e "${RED}[KO] $SHADOW_CREDS_COUNT account(s) with Shadow Credentials (msDS-KeyCredentialLink) found → shadow_creds.txt${NC}"
   echo "$SHADOW_CREDS_OUTPUT" | grep -E "^(sAMAccountName|msDS-KeyCredentialLink):" > "$OUTPUT_DIR/shadow_creds.txt"
-  FIRST_SHADOW_TARGET=$(echo "$SHADOW_CREDS_ACCOUNTS" | head -1)
-  echo "$SHADOW_CREDS_ACCOUNTS" | while read -r account; do
-    [ -z "$account" ] && continue
-  done
-  echo -e "${GREY}       └─ pywhisker -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target '$FIRST_SHADOW_TARGET' --action list${NC}"
+  SHADOW_CREDS_USERS=$(echo "$SHADOW_CREDS_ACCOUNTS" | grep -v '\$$')
+  SHADOW_CREDS_COMPUTERS=$(echo "$SHADOW_CREDS_ACCOUNTS" | grep '\$$')
+  USER_SC_COUNT=$(echo "$SHADOW_CREDS_USERS" | grep -v "^$" | wc -l)
+  COMP_SC_COUNT=$(echo "$SHADOW_CREDS_COMPUTERS" | grep -v "^$" | wc -l)
+  if [ "$USER_SC_COUNT" -gt 0 ]; then
+    echo -e "${RED}[KO] $USER_SC_COUNT user account(s) with Shadow Credentials (msDS-KeyCredentialLink) → shadow_creds.txt${NC}"
+    FIRST_SHADOW_TARGET=$(echo "$SHADOW_CREDS_USERS" | head -1)
+    echo -e "${GREY}       └─ pywhisker -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' --target '$FIRST_SHADOW_TARGET' --action list${NC}"
+  fi
+  if [ "$COMP_SC_COUNT" -gt 0 ]; then
+    echo -e "${GREY}       └─ $COMP_SC_COUNT computer account(s) with Shadow Credentials (WHfB/Bitlocker)${NC}"
+  fi
 else
   echo -e "${GREEN}[OK] No Shadow Credentials found${NC}"
 fi
 
 # GPP Passwords (SYSVOL)
 GPP_OUTPUT=$(nxc smb $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --share=SYSVOL -M gpp_password 2>/dev/null)
-if echo "$GPP_OUTPUT" | grep -q "Found credentials in"; then
+if echo "$GPP_OUTPUT" | grep -q "Found credentials in" && echo "$GPP_OUTPUT" | grep -qP 'Password:\s+\S+'; then
   echo -e "${RED}[KO] GPP credentials found → gpp_passwords.txt${NC}"
   echo "$GPP_OUTPUT" | grep "Found credentials in" > "$OUTPUT_DIR/gpp_passwords.txt"
 else
@@ -1609,7 +1614,7 @@ if [ "$HTTP_COUNT" -gt 0 ] && command -v gowitness &>/dev/null; then
 elif ! command -v gowitness &>/dev/null; then
   echo -e "${GREY}[--] GoWitness not found, skipping screenshots${NC}"
 else
-  echo -e "${GREY}[--] No web hosts found on ${SUBNET}.0/24${NC}"
+  echo -e "${GREEN}[OK] No web hosts found in scope (${SCAN_TARGETS[*]})${NC}"
 fi
 
 # NFS Share Enumeration
@@ -1650,7 +1655,7 @@ fi
 # SMB Share Enumeration
 > "$OUTPUT_DIR/smb_shares.txt"
 for target in "${SCAN_TARGETS[@]}"; do
-  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null | grep -E "READ|WRITE" >> "$OUTPUT_DIR/smb_shares.txt"
+  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --shares 2>/dev/null | grep --text -E "READ|WRITE" >> "$OUTPUT_DIR/smb_shares.txt"
 done
 READABLE=0
 [ -f "$OUTPUT_DIR/smb_shares.txt" ] && READABLE=$(wc -l < "$OUTPUT_DIR/smb_shares.txt" | tr -d ' \n')
