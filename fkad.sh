@@ -15,8 +15,7 @@ echo -e "${GREY}   |  \     /  | |  \     /  | |  \     /  | |  \     /  | |  \ 
 echo -e "${GREY}    \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /${NC}"
 echo -e "${GREY}     '._____.'     '._____.'     '._____.'     '._____.'     '._____.' ${NC}"
 echo ""
-echo -e "${GREY}    fkad by @fkxdr${NC}"
-echo -e "${GREY}    https://github.com/fkxdr/fkad${NC}"
+echo -e "${GREY}    real hackers listen to inside darknet${NC}"
 echo ""
 
 # Check Tooling
