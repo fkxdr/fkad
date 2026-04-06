@@ -3,7 +3,7 @@
 ![fkad](https://github.com/user-attachments/assets/b1e3375e-75f1-46e2-9616-4c469f9fe5b1)
 
 
-`fkad` is a small offensive helper script designed for exegol docker containers and pentesting instances. It automates common and mundane enumeration tasks, executes sanity checks and prepares artifacts for follow-up toolkits. 
+`fkad` is a custom offensive helper kit designed for exegol containers. It automates common and mundane enumeration tasks, executes sanity checks and prepares artifacts for follow-up exploiting. 
 
 ## Quick install & run
 
