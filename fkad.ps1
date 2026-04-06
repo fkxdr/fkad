@@ -17,7 +17,7 @@ function Banner {
     Write-Host "    \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /" -ForegroundColor DarkGray
     Write-Host "     '._____.'     '._____.'     '._____.'     '._____.'     '._____.' " -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "    fkad local by @fkxdr" -ForegroundColor DarkGray
+    Write-Host "    real hackers listen to inside darknet" -ForegroundColor DarkGray
     Write-Host ""
 }
 
