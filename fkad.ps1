@@ -47,14 +47,22 @@ Write-Host ""
 $onlineToolsAvailable = $false
 try {
     $testGH = Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-    $testAssets = Invoke-WebRequest -Uri "https://release-assets.githubusercontent.com" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
     if ($testGH.Content -match "Firewall Authentication|You must authenticate|captive") {
-        Write-Host "[ !! ]   Captive Portal detected - internet access blocked, skipping online tools" -ForegroundColor DarkYellow
+        Write-Host "[ -- ]   Captive Portal detected - online tools will be skipped" -ForegroundColor DarkYellow
     } else {
-        $onlineToolsAvailable = $true
+        try {
+            $testAssets = Invoke-WebRequest -Uri "https://release-assets.githubusercontent.com" -UseBasicParsing -TimeoutSec 5
+            $onlineToolsAvailable = $true
+        } catch [System.Net.WebException] {
+            if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 404) {
+                $onlineToolsAvailable = $true
+            } else {
+                Write-Host "[ -- ]   GitHub release assets blocked - online tools will be skipped" -ForegroundColor DarkGray
+            }
+        }
     }
 } catch {
-    Write-Host "[ !! ]   GitHub or release-assets.githubusercontent.com not reachable - online tools will be skipped" -ForegroundColor DarkYellow
+    Write-Host "[ -- ]   GitHub not reachable - online tools will be skipped" -ForegroundColor DarkGray
 }
 
 $isDomainJoined = (Get-WmiObject Win32_ComputerSystem).PartOfDomain
