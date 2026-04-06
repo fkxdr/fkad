@@ -467,11 +467,39 @@ Write-Host ""
 # SCCM/SCOM Enumeration
 try {
     $smContainer = Get-ADObject -Filter {Name -eq "System Management"} -SearchBase $([ADSI]"LDAP://RootDSE").defaultNamingContext -ErrorAction Stop
-    
     if ($smContainer) {
         Write-Host "[P115]   System Center infrastructure detected (SCCM/SCOM)" -ForegroundColor DarkRed
         Write-Host "          - SCCM: Use SharpSCCM - https://github.com/Mayyhem/SharpSCCM" -ForegroundColor DarkGray
         Write-Host "          - SCOM: Use SharpSCOM - https://github.com/breakfix/SharpSCOM" -ForegroundColor DarkGray
+
+        # Find site servers via GenericAll on System Management container (same technique as SharpSCCM)
+        try {
+            $entry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://CN=System Management,CN=System,$($([ADSI]"LDAP://RootDSE").defaultNamingContext)")
+            $acl = $entry.ObjectSecurity
+            $siteServers = @()
+            foreach ($ace in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+                if ($ace.ActiveDirectoryRights -eq "GenericAll") {
+                    try {
+                        $account = $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value
+                        if ($account -match "\$$") { $siteServers += $account }
+                    } catch { }
+                }
+            }
+            if ($siteServers.Count -gt 0) {
+                Write-Host "[P116]   Likely SCCM site server(s) found (GenericAll on System Management)" -ForegroundColor DarkRed
+                foreach ($s in $siteServers) { Write-Host "          - $s" -ForegroundColor DarkRed }
+                Write-Host "          - SharpSCCM.exe get site-push-settings -sms $($siteServers[0] -replace '\$','')" -ForegroundColor DarkGray
+            }
+        } catch { }
+
+        # Check if SCCM client is installed locally (NAA creds accessible)
+        try {
+            $mp = (Get-WmiObject -Namespace "root\ccm" -Class "SMS_Authority" -ErrorAction Stop | Select-Object -First 1).CurrentManagementPoint
+            if ($mp) {
+                Write-Host "[P117]   SCCM client installed locally, management point: $mp" -ForegroundColor DarkRed
+                Write-Host "          - NAA credentials may be recoverable: SharpSCCM.exe local credentials" -ForegroundColor DarkGray
+            }
+        } catch { }
     }
 } catch {
     Write-Host "[ OK ]   No System Center (SCCM/SCOM) infrastructure detected" -ForegroundColor Green
