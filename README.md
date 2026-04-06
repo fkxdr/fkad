@@ -1,7 +1,6 @@
 # fkad
 
-![fkad](https://github.com/user-attachments/assets/b1e3375e-75f1-46e2-9616-4c469f9fe5b1)
-
+<img width="2525" height="385" alt="366097681-8fa1fc4b-43c1-4789-8184-0138bd81d0b1" src="https://github.com/user-attachments/assets/11c9fe22-c113-4a4f-a8df-45c839aa54cf" />
 
 `fkad` is a custom offensive helper kit designed for exegol containers. It automates common and mundane enumeration tasks, executes sanity checks and prepares artifacts for follow-up exploiting. 
 
