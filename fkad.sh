@@ -1133,18 +1133,18 @@ else
   fi
 fi
 
-# Pre-Windows 2000 Computer Accounts
-PRE2K_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M pre2k 2>/dev/null)
-if echo "$PRE2K_OUTPUT" | grep -q "Found.*pre-created computer accounts"; then
-  echo -e "${RED}[KO] Pre-Windows 2000 computer accounts found → pre2k.txt${NC}"
-  echo "$PRE2K_OUTPUT" | grep "Pre-created computer account\|Found.*pre-created" > "$OUTPUT_DIR/pre2k.txt"
+# Pre-Windows 2000 Default Password Check
+PRE2K_DEFAULT_PASS_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -M pre2k 2>/dev/null)
+if echo "$PRE2K_DEFAULT_PASS_OUTPUT" | grep -q "Found.*pre-created computer accounts"; then
+  echo -e "${RED}[KO] Computer account(s) with Pre-Windows 2000 default password still set → pre2k_default_pass.txt${NC}"
+  echo "$PRE2K_DEFAULT_PASS_OUTPUT" | grep "Pre-created computer account\|Found.*pre-created" > "$OUTPUT_DIR/pre2k_default_pass.txt"
 else
-  echo -e "${GREEN}[OK] No Pre-Windows 2000 computer accounts found${NC}"
+  echo -e "${GREEN}[OK] No computer accounts with Pre-Windows 2000 default password${NC}"
 fi
 
 # Pre-Windows 2000 Compatible Access Group
-PRE2K_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(cn=Pre-Windows 2000 Compatible Access)" member 2>/dev/null)
-PRE2K_MEMBERS=$(echo "$PRE2K_OUTPUT" | grep "^member:" | awk '{print $2}')
+PRE2K_GROUP_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(cn=Pre-Windows 2000 Compatible Access)" member 2>/dev/null)
+PRE2K_MEMBERS=$(echo "$PRE2K_GROUP_OUTPUT" | grep "^member:" | awk '{print $2}')
 PRE2K_EVERYONE=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-1-0")
 PRE2K_ANON=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-7")
 PRE2K_AUTHUSERS=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-11")
