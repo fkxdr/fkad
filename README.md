@@ -29,7 +29,6 @@ Example:
 
 For most assessments it makes sense to follow up enumeration on a provided device. 
 
-- [ ] fkad.ps1
 ```ps
 wget https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1
 powershell -ExecutionPolicy Bypass -File fkad.ps1
