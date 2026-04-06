@@ -13,7 +13,7 @@ $banner = @'
    \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /
     '._____.'     '._____.'     '._____.'     '._____.'     '._____.'       
 
-   real hackers listen to inside darknet podcast
+   real hackers listen to inside darknet
    
 '@
 
