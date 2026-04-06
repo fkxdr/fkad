@@ -3,6 +3,22 @@ param (
     [int]$Depth = 1
 )
 
+$banner = @'
+
+      _____         _____         _____         _____         _____
+    .'     '.     .'     '.     .'     '.     .'     '.     .'     '.
+   /  o   o  \   /  o   o  \   /  o   o  \   /  o   o  \   /  o   o  \
+  |           | |           | |           | |           | |           |
+  |  \     /  | |  \     /  | |  \     /  | |  \     /  | |  \     /  |
+   \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /   \  '---'  /
+    '._____.'     '._____.'     '._____.'     '._____.'     '._____.'       
+
+   real hackers listen to inside darknet podcast
+   
+'@
+
+Write-Host $banner -ForegroundColor DarkGray
+
 $MpPath = "C:\Program Files\Windows Defender\MpCmdRun.exe"
 
 if (-Not (Test-Path -Path $MpPath)) {
@@ -15,9 +31,17 @@ if (-Not (Test-Path -Path $Directory -PathType Container)) {
     exit 1
 }
 
-# Suppress Defender Security Center popup during scan
-$keyPath = "HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.Defender.SecurityCenter"
-Reg.exe add $keyPath /v "Enabled" /t REG_DWORD /d "0" /f | Out-Null
+function Toggle-DefenderPopup {
+    param ([switch]$Disable)
+    $keyPath = "HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\Windows.Defender.SecurityCenter"
+    if ($Disable) {
+        Reg.exe add $keyPath /v "Enabled" /t REG_DWORD /d "0" /f | Out-Null
+    } else {
+        Reg.exe delete $keyPath /v "Enabled" /f | Out-Null
+    }
+}
+
+Toggle-DefenderPopup -Disable
 
 try {
     $folders = Get-ChildItem -Path $Directory -Recurse -Directory -Depth ($Depth - 1) -ErrorAction SilentlyContinue | Sort-Object FullName
@@ -26,7 +50,7 @@ try {
 
     if ($folders.Count -eq 0) {
         Write-Host "No subfolders found." -ForegroundColor DarkYellow
-        Reg.exe delete $keyPath /v "Enabled" /f | Out-Null
+        Toggle-DefenderPopup
         exit 0
     }
 
@@ -53,5 +77,7 @@ catch {
     Write-Host "`nError: $_" -ForegroundColor DarkRed
 }
 
-# Restore Defender popup
-Reg.exe delete $keyPath /v "Enabled" /f | Out-Null
+Toggle-DefenderPopup
+
+Write-Host "CU soon. Press enter to continue." -ForegroundColor DarkGray
+Read-Host
