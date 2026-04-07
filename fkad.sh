@@ -1389,18 +1389,66 @@ else
 fi
 
 # OU ACL GenericWrite / ManageGPLink
-OU_ACLS=$(dacledit.py -action read -dc-ip $DC_IP "$FULL_USER:$PASSWORD" -b "$DOMAIN_DN" 2>/dev/null | awk '/Target.*OU=/ { match($0, /OU=[^,]+/); ou=substr($0,RSTART,RLENGTH) } /Access mask/ { mask=$NF } /Trustee \(SID\)/ { trustee=$NF; if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|Local System|SYSTEM|Policies/) { if (mask ~ /GenericWrite|GenericAll|WriteDACL|0xf01ff|0x40000/) { print ou "|" trustee "|" mask } } }' | sort -u)
+OU_ACLS=$(dacledit.py -action read -dc-ip $DC_IP "$FULL_USER:$PASSWORD" -b "$DOMAIN_DN" 2>/dev/null | awk '
+  /Target.*OU=/ { match($0, /OU=[^,]+/); ou=substr($0,RSTART,RLENGTH) }
+  /Access mask/ { mask=$NF }
+  /Object type.*f30e3bbe/ { gplink=1 }
+  /Trustee \(SID\)/ {
+    trustee=$NF
+    if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|Local System|SYSTEM|Policies/) {
+      if (mask ~ /GenericWrite|GenericAll|WriteDACL|0xf01ff|0x40000/ ||
+          (mask ~ /0x20/ && gplink)) {
+        print ou "|" trustee "|" mask "|" (gplink ? "gpLink" : "GenericWrite")
+      }
+    }
+    gplink=0
+  }
+' | sort -u)
 if [ ! -z "$OU_ACLS" ]; then
   OU_COUNT=$(echo "$OU_ACLS" | grep -v "^$" | wc -l)
   echo -e "${RED}[KO] $OU_COUNT non-default write ACE(s) on Organizational Units → ou_acls.txt${NC}"
-  echo "$OU_ACLS" | while IFS='|' read -r ou trustee mask; do
+  echo "$OU_ACLS" | while IFS='|' read -r ou trustee mask type; do
     [ -z "$ou" ] && continue
-    echo -e "${RED}       └─ $trustee → $ou ($mask)${NC}"
-    echo -e "${GREY}          └─ gPLink poisoning possible (OUned.py) — affects all OU child objects incl. adminCount=1${NC}"
+    echo -e "${RED}       └─ $trustee → $ou ($type)${NC}"
+    if [ "$type" = "gpLink" ]; then
+      echo -e "${GREY}          └─ GPO link write: can link existing or new GPO to this OU${NC}"
+      echo -e "${GREY}             1) pygpoabuse -u '$AD_USER' -p '$PASSWORD' -d '$DOMAIN' --dc-ip $DC_IP --target-dn '<OU_DN>' --add-local-admin${NC}"
+      echo -e "${GREY}             2) OUned.py -u '$AD_USER' -p '$PASSWORD' -d '$DOMAIN' --dc-ip $DC_IP${NC}"
+    else
+      echo -e "${GREY}          └─ gPLink poisoning possible (OUned.py) — affects all OU child objects incl. adminCount=1${NC}"
+    fi
   done
   echo "$OU_ACLS" > "$OUTPUT_DIR/ou_acls.txt"
 else
   echo -e "${GREEN}[OK] No non-default write ACEs on Organizational Units${NC}"
+fi
+
+# GPO creation rights (CreateChild on CN=Policies,CN=System)
+GPO_CREATE_RAW=$(dacledit.py -action read \
+  -target-dn "CN=Policies,CN=System,$DOMAIN_DN" \
+  -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
+GPO_CREATE=$(echo "$GPO_CREATE_RAW" | awk '
+  /Access mask/ { mask=$NF }
+  /Trustee \(SID\)/ {
+    trustee=$NF
+    if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|SYSTEM|S-1-5-18|S-1-5-32-544|Group Policy Creator Owners/) {
+      if (mask ~ /CreateChild|0x1\b|0xf01ff/) {
+        print trustee
+      }
+    }
+  }
+' | sort -u)
+if [ ! -z "$GPO_CREATE" ]; then
+  GPO_CREATE_COUNT=$(echo "$GPO_CREATE" | grep -v "^$" | wc -l)
+  echo -e "${RED}[KO] $GPO_CREATE_COUNT principal(s) with GPO creation rights (CreateChild on CN=Policies)${NC}"
+  echo "$GPO_CREATE" | while read -r trustee; do
+    [ -z "$trustee" ] && continue
+    echo -e "${RED}       └─ $trustee${NC}"
+  done
+  echo -e "${GREY}          └─ SharpGPOAbuse.exe --AddLocalAdmin --UserAccount $AD_USER --GPOName 'evil' --force${NC}"
+  echo -e "${GREY}             New-GPLink -Name 'evil' -Target '<OU_DN>' (requires separate WriteGPLink right)${NC}"
+else
+  echo -e "${GREEN}[OK] GPO creation rights restricted to default principals${NC}"
 fi
 
 # AdminSDHolder ACL
