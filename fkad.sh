@@ -67,12 +67,12 @@ fi
 GRIFFON_PATH="/workspace/GriffonAD"
 if [ ! -d "$GRIFFON_PATH" ]; then
   git clone https://github.com/shellinvictus/GriffonAD "$GRIFFON_PATH" &>/dev/null 2>&1
-  if [ -d "$GRIFFON_PATH" ]; then
-    pip install -r "$GRIFFON_PATH/requirements.txt" &>/dev/null 2>&1
-    echo -e "${GREEN}[OK] GriffonAD installed${NC}"
-  else
+  if [ ! -d "$GRIFFON_PATH" ]; then
     echo -e "${GREY}[--] GriffonAD installation failed${NC}"
   fi
+fi
+if [ -d "$GRIFFON_PATH" ]; then
+  pip install -r "$GRIFFON_PATH/requirements.txt" --break-system-packages &>/dev/null 2>&1
 fi
 
 [ "$PREFLIGHT_FAIL" -eq 1 ] && exit 1
@@ -239,10 +239,22 @@ if [ ! -z "$ALL_DCS" ]; then
     fi
   done <<< "$ALL_DCS"
   DC_COUNT=$(wc -l < "$OUTPUT_DIR/all_dcs.txt")
-  echo -e "${GREY}[*] Found $DC_COUNT Domain Controller(s) → all_dcs.txt${NC}"
+  echo -e "${GREEN}[OK] Found $DC_COUNT Domain Controller(s) → all_dcs.txt${NC}"
 else
-  echo -e "${GREY}[--] Could not enumerate more Domain Controllers${NC}"
+  echo -e "${GREY}[--] Could not enumerate Domain Controller(s)${NC}"
   DC_COUNT=0
+fi
+
+RODC_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))" sAMAccountName dNSHostName 2>/dev/null)
+RODC_COUNT=$(echo "$RODC_OUTPUT" | grep -c "^sAMAccountName:")
+if [ "$RODC_COUNT" -gt 0 ]; then
+  > "$OUTPUT_DIR/all_rodcs.txt"
+  echo "$RODC_OUTPUT" | grep -E "^(sAMAccountName|dNSHostName):" | awk '{print $2}' | paste - - | while IFS=$'\t' read -r sam dns; do
+    echo "${sam}:${dns}" >> "$OUTPUT_DIR/all_rodcs.txt"
+  done
+  echo -e "${GREEN}[OK] Found $RODC_COUNT RODC(s) → all_rodcs.txt${NC}"
+else
+  echo -e "${GREEN}[OK] No RODC(s) found${NC}"
 fi
 
 echo ""
@@ -554,6 +566,26 @@ if [ "$CREATOR_COUNT" -gt 0 ]; then
   done
 else
   echo -e "${GREEN}[OK] No ms-DS-CreatorSID entries found${NC}"
+fi
+
+# ScriptPath WriteProperty
+SCRIPTPATH_ACL=$(dacledit.py -action read -dc-ip $DC_IP "$FULL_USER:$PASSWORD" -b "CN=Users,$DOMAIN_DN" 2>/dev/null | awk '
+  /Object type.*bf967a8b/ { script=1 }
+  script && /Access mask/ { mask=$NF }
+  script && /Trustee/ { trustee=$NF; if (mask != "") print trustee "|" mask; script=0; mask="" }
+' | grep -v "Domain Admins\|Enterprise Admins\|SYSTEM\|S-1-5-18\|S-1-5-32-544\|Administrators" | sort -u)
+
+if [ ! -z "$SCRIPTPATH_ACL" ]; then
+  SCRIPTPATH_COUNT=$(echo "$SCRIPTPATH_ACL" | grep -c .)
+  echo -e "${RED}[KO] $SCRIPTPATH_COUNT principal(s) with WriteProperty on scriptPath → logon script injection possible${NC}"
+  echo "$SCRIPTPATH_ACL" | while IFS='|' read -r trustee mask; do
+    echo -e "${RED}       └─ $trustee (mask: $mask)${NC}"
+  done
+  echo -e "${GREY}          1) bloodyAD -u '$AD_USER' -p '$PASSWORD' -d $DOMAIN --host $DC_IP set object <TARGET_USER> scriptPath -v 'evil.bat'${NC}"
+  echo -e "${GREY}          2) smbclient //$DC_IP/SYSVOL -U '$DOMAIN/$AD_USER%$PASSWORD' -c 'cd $DOMAIN/scripts; put evil.bat'${NC}"
+  echo -e "${GREY}          3) Wait for target user logon → reverse shell callback${NC}"
+else
+  echo -e "${GREEN}[OK] No non-default WriteProperty on scriptPath found${NC}"
 fi
 
 echo ""
@@ -992,9 +1024,9 @@ if command -v bloodhound-python &>/dev/null || command -v bloodhound.py &>/dev/n
       elif echo "$GRIFFON_OUTPUT" | grep -qE "(->|—>)"; then
         PATHS=$(echo "$GRIFFON_OUTPUT" | grep -cE "(->|—>)")
         echo -e "${RED}[KO] GriffonAD found $PATHS attack path(s) → griffon_paths.txt${NC}"
-        echo "$GRIFFON_OUTPUT" | grep -E "(->|—>)" | while read -r path; do
-          TARGET=$(echo "$path" | grep -oE '[A-Za-z0-9_$]+$')
-          echo -e "${RED}       └─ $TARGET${NC}"
+        echo "$GRIFFON_OUTPUT" | grep -E $'—>|->' | while IFS= read -r path; do
+          CLEAN=$(echo "$path" | sed 's/^[0-9a-f]* + //' | sed 's/[♦]//g' | tr -s ' ')
+          echo -e "${RED}       └─ $CLEAN${NC}"
         done
         echo "$GRIFFON_OUTPUT" > "$OUTPUT_DIR/griffon_paths.txt"
       else
@@ -1480,10 +1512,10 @@ if [ ! -z "$GPO_CREATE" ]; then
   echo -e "${RED}[KO] $GPO_CREATE_COUNT principal(s) with GPO creation rights (CreateChild on CN=Policies)${NC}"
   echo "$GPO_CREATE" | while read -r trustee; do
     [ -z "$trustee" ] && continue
+    RESOLVED=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(objectSid=$trustee)" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+    [ ! -z "$RESOLVED" ] && trustee="$RESOLVED"
     echo -e "${RED}       └─ $trustee${NC}"
   done
-  echo -e "${GREY}          └─ SharpGPOAbuse.exe --AddLocalAdmin --UserAccount $AD_USER --GPOName 'evil' --force${NC}"
-  echo -e "${GREY}             New-GPLink -Name 'evil' -Target '<OU_DN>' (requires separate WriteGPLink right)${NC}"
 else
   echo -e "${GREEN}[OK] GPO creation rights restricted to default principals${NC}"
 fi
