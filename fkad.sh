@@ -880,17 +880,6 @@ else
   echo -e "${GREEN}[OK] LDAP anonymous bind disabled${NC}"
 fi
 
-# Plain LDAP without TLS enforcement
-PLAIN_LDAP=$(ldapsearch -x -H ldap://$DC_IP -b "" -s base supportedCapabilities 2>/dev/null | grep -c "dn:")
-if [ "$PLAIN_LDAP" -gt 0 ]; then
-  echo -e "${RED}[KO] LDAP port 389 is accessible, intercepted traffic may be unencrypted${NC}"
-  echo -e "${GREY}       └─ tcpdump -i eth0 -w ldap_capture.pcap port 389${NC}"
-  echo -e "${GREY}       └─ tshark -r ldap_capture.pcap -Y 'ldap' -T text${NC}"
-else
-  echo -e "${GREEN}[OK] LDAP not accessible without TLS${NC}"
-fi
-
-
 echo ""
 
 # Create domain_users.txt
