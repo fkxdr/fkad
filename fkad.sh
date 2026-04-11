@@ -624,25 +624,6 @@ else
   echo -e "${GREEN}[OK] No coerce methods available on DC${NC}"
 fi
 
-# Create Relay List and filter DC IPs from relay targets
-> "$OUTPUT_DIR/relay_targets_raw.txt"
-for target in "${SCAN_TARGETS[@]}"; do
-  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_raw_tmp.txt" &>/dev/null
-  [ -f "$OUTPUT_DIR/relay_raw_tmp.txt" ] && cat "$OUTPUT_DIR/relay_raw_tmp.txt" >> "$OUTPUT_DIR/relay_targets_raw.txt"
-  rm -f "$OUTPUT_DIR/relay_raw_tmp.txt"
-done
-DC_IPS=$(awk -F: '{print $2}' "$OUTPUT_DIR/all_dcs.txt" 2>/dev/null)
-if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
-  > "$OUTPUT_DIR/relay_targets.txt"
-  while IFS= read -r ip; do
-    if ! echo "$DC_IPS" | grep -q "^$ip$"; then
-      echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
-    fi
-  done < "$OUTPUT_DIR/relay_targets_raw.txt"
-  rm "$OUTPUT_DIR/relay_targets_raw.txt"
-fi
-RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
-
 # Authentication Coercion & Poisoning - WPAD
 WPAD_DNS=$(nslookup wpad.$DOMAIN $DC_IP 2>&1)
 if echo "$WPAD_DNS" | grep -q "can't find"; then
@@ -661,6 +642,25 @@ else
   echo -e "${GREEN}[OK] IPv6 DNS configured for DC (no DHCPv6 Poisoning)${NC}"
   IPV6_VULN=0
 fi
+
+# Create Relay List and filter DC IPs from relay targets
+> "$OUTPUT_DIR/relay_targets_raw.txt"
+for target in "${SCAN_TARGETS[@]}"; do
+  nxc smb "$target" -u "$AD_USER" -p "$PASSWORD" --gen-relay-list "$OUTPUT_DIR/relay_raw_tmp.txt" &>/dev/null
+  [ -f "$OUTPUT_DIR/relay_raw_tmp.txt" ] && cat "$OUTPUT_DIR/relay_raw_tmp.txt" >> "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm -f "$OUTPUT_DIR/relay_raw_tmp.txt"
+done
+DC_IPS=$(awk -F: '{print $2}' "$OUTPUT_DIR/all_dcs.txt" 2>/dev/null)
+if [ -f "$OUTPUT_DIR/relay_targets_raw.txt" ]; then
+  > "$OUTPUT_DIR/relay_targets.txt"
+  while IFS= read -r ip; do
+    if ! echo "$DC_IPS" | grep -q "^$ip$"; then
+      echo "$ip" >> "$OUTPUT_DIR/relay_targets.txt"
+    fi
+  done < "$OUTPUT_DIR/relay_targets_raw.txt"
+  rm "$OUTPUT_DIR/relay_targets_raw.txt"
+fi
+RELAY_COUNT=$([ -f "$OUTPUT_DIR/relay_targets.txt" ] && wc -l < "$OUTPUT_DIR/relay_targets.txt" || echo 0)
 
 # Authentication Coercion & Poisoning - ADIDNS Poisoning
 ADIDNS_TEST=$(/opt/tools/krbrelayx/venv/bin/python3 /opt/tools/krbrelayx/dnstool.py -u "$DOMAIN\\$AD_USER" -p "$PASSWORD" -r "attacktest.${DOMAIN}" -a add -d 127.0.0.1 -dc-ip $DC_IP $DC_IP 2>&1)
