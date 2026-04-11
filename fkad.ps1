@@ -1030,6 +1030,50 @@ if ($found.Count -gt 0) {
     Write-Host "[ OK ]   No browser credential stores found" -ForegroundColor Green
 }
 
+# Windows Credential Manager
+$credmanOutput = cmdkey /list 2>$null
+$actionableTargets = $credmanOutput | Where-Object {
+    $_ -match "Target:|Ziel:" -and
+    $_ -notmatch "MicrosoftAccount|WindowsLive|virtualapp|SSO_POP|didlogical"
+}
+if ($actionableTargets) {
+    $credmanOutput | Where-Object { $_ -notmatch "MicrosoftAccount|WindowsLive|virtualapp|SSO_POP|didlogical" } |
+        Out-File "$OUT\credman.txt" -Encoding utf8
+    Write-Host "[P571]   Windows Credential Manager entries found -> credman.txt" -ForegroundColor DarkRed
+    $rdpCreds = $actionableTargets | Where-Object { $_ -match "TERMSRV" }
+    $netCreds = $actionableTargets | Where-Object { $_ -match "Domain|LegacyGeneric" }
+    if ($rdpCreds) {
+        Write-Host "          - Saved RDP credentials present" -ForegroundColor DarkRed
+        Write-Host "          - runas /savedcred /user:<USER> cmd.exe" -ForegroundColor DarkGray
+    }
+    if ($netCreds) {
+        Write-Host "          - Saved network/domain credentials present" -ForegroundColor DarkRed
+    }
+} else {
+    Write-Host "[ OK ]   No actionable Windows Credential Manager entries found" -ForegroundColor Green
+}
+
+# Wi-Fi Profiles
+$wlanProfiles = netsh wlan show profiles 2>$null
+if ($wlanProfiles -match "All User Profile") {
+    $profileNames = $wlanProfiles | Where-Object { $_ -match "All User Profile" } | 
+        ForEach-Object { ($_ -split ":")[1].Trim() }
+    $wifiOut = @()
+    foreach ($profile in $profileNames) {
+        $detail = netsh wlan show profile name="$profile" key=clear 2>$null
+        $wifiOut += $detail
+        if ($detail -match "Key Content") {
+            $keyLine = ($detail | Where-Object { $_ -match "Key Content" }) -join ""
+            Write-Host "[P572]   Wi-Fi profile with cleartext key: $profile" -ForegroundColor DarkRed
+            Write-Host "          - $keyLine" -ForegroundColor DarkGray
+        }
+    }
+    $wifiOut | Out-File "$OUT\wifi_profiles.txt" -Encoding utf8
+    Write-Host "          - All profiles -> wifi_profiles.txt" -ForegroundColor DarkGray
+} else {
+    Write-Host "[ OK ]   No Wi-Fi profiles found" -ForegroundColor Green
+}
+
 # PowerShell history
 $histFile = "$env:APPDATA\Microsoft\Windows\PowerShell\PSReadline\ConsoleHost_history.txt"
 if (Test-Path $histFile) {
@@ -1082,16 +1126,20 @@ if ($foundAI.Count -gt 0) {
 Write-Host ""
 
 # Screen Lock Timeout
-$screenTimeout = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue).ScreenSaveTimeOut
 $screenSaverActive = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name "ScreenSaveActive" -ErrorAction SilentlyContinue).ScreenSaveActive
-if ($screenSaverActive -ne "1") {
-    Write-Host "[P730]   Screen lock/screensaver not configured" -ForegroundColor DarkRed
-} elseif (-not $screenTimeout) {
-    Write-Host "[P730]   Screen lock timeout not set" -ForegroundColor DarkRed
-} elseif ([int]$screenTimeout -gt 900) {
+$screenTimeout = (Get-ItemProperty "HKCU:\Control Panel\Desktop" -Name "ScreenSaveTimeOut" -ErrorAction SilentlyContinue).ScreenSaveTimeOut
+$inactivityTimeout = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "InactivityTimeoutSecs" -ErrorAction SilentlyContinue).InactivityTimeoutSecs
+
+if ($inactivityTimeout -and [int]$inactivityTimeout -le 900) {
+    Write-Host "[ OK ]   Screen lock timeout enforced via GPO: $([int]$inactivityTimeout / 60) minutes" -ForegroundColor Green
+} elseif ($inactivityTimeout -and [int]$inactivityTimeout -gt 900) {
+    Write-Host "[P731]   Screen lock GPO timeout too long: $([int]$inactivityTimeout / 60) minutes (>15)" -ForegroundColor DarkRed
+} elseif ($screenSaverActive -eq "1" -and $screenTimeout -and [int]$screenTimeout -le 900) {
+    Write-Host "[ OK ]   Screen lock timeout: $([int]$screenTimeout / 60) minutes" -ForegroundColor Green
+} elseif ($screenSaverActive -eq "1" -and $screenTimeout -and [int]$screenTimeout -gt 900) {
     Write-Host "[P731]   Screen lock timeout too long: $([int]$screenTimeout / 60) minutes (>15)" -ForegroundColor DarkRed
 } else {
-    Write-Host "[ OK ]   Screen lock timeout: $([int]$screenTimeout / 60) minutes" -ForegroundColor Green
+    Write-Host "[P730]   Screen lock timeout not set" -ForegroundColor DarkRed
 }
 
 # Office Macro Policy
