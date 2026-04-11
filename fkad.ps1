@@ -607,7 +607,38 @@ try {
         }
     }
 } catch {
-    Write-Host "[ -- ]   Tombstone check failed, user is probably not Domain Admin" -ForegroundColor DarkGray
+    Write-Host "[ -- ]   Tombstone check failed" -ForegroundColor DarkGray
+}
+
+# Reanimate-Tombstones ACL Check
+try {
+    $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+    $DN = "DC=" + ($domain.Name -replace "\.", ",DC=")
+    $entry = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$DN")
+    $acl = $entry.ObjectSecurity
+    $reanimateGuid = [System.Guid]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+    $dangerousTrustees = @()
+    foreach ($ace in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        if ($ace.ObjectType -eq $reanimateGuid) {
+            try {
+                $account = $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value
+                if ($account -notmatch "Domain Admins|Enterprise Admins|Administrators|SYSTEM") {
+                    $dangerousTrustees += $account
+                }
+            } catch { $dangerousTrustees += $ace.IdentityReference.Value }
+        }
+    }
+    if ($dangerousTrustees.Count -gt 0) {
+        Write-Host "[P131]   Non-admin principal(s) with Reanimate-Tombstones right" -ForegroundColor DarkRed
+        foreach ($t in $dangerousTrustees) {
+            Write-Host "          - $t" -ForegroundColor DarkRed
+        }
+        Write-Host "          - Restore deleted privileged account: Get-ADObject -Filter {isDeleted -eq `$true} -IncludeDeletedObjects | Restore-ADObject" -ForegroundColor DarkGray
+    } else {
+        Write-Host "[ OK ]   Reanimate-Tombstones right restricted to default principals" -ForegroundColor Green
+    }
+} catch {
+    Write-Host "[ -- ]   Reanimate-Tombstones check failed: $_" -ForegroundColor DarkGray
 }
 
 Write-Host ""
