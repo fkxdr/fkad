@@ -1751,11 +1751,11 @@ if [ "$NFS_COUNT" -gt 0 ]; then
       fi
     done
   else
-    echo -e "${GREEN}[OK] No accessible NFS shares found on ${SUBNET}.0/24${NC}"
+    echo -e "${GREEN}[OK] No accessible NFS shares found${NC}"
     rm -f "$OUTPUT_DIR/nfs_shares.txt"
   fi
 else
-  echo -e "${GREEN}[OK] No NFS hosts found on ${SUBNET}.0/24${NC}"
+  echo -e "${GREEN}[OK] No NFS hosts found${NC}"
 fi
 
 # SMB Share Enumeration
@@ -1857,18 +1857,16 @@ for target in "${SCAN_TARGETS[@]}"; do
   RDP_OUTPUT+=$(nxc rdp "$target" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --screenshot 2>/dev/null)$'\n'
 done
 cd "$CURRENT_PATH"
-
 RDP_ACCESSIBLE=$(echo "$RDP_OUTPUT" | grep "\[+\]" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
 RDP_COUNT=$(echo "$RDP_ACCESSIBLE" | grep -v "^$" | wc -l)
 if [ "$RDP_COUNT" -gt 0 ]; then
-  echo "$RDP_OUTPUT" | grep "\[+\]" > "$OUTPUT_DIR/accessible-rdp.txt"
+  echo "$RDP_OUTPUT" | grep "\[+\]" > "$OUTPUT_DIR/rdp.txt"
   SHOT_COUNT=$(ls "$OUTPUT_DIR/rdp/"*.png 2>/dev/null | wc -l)
   if [ "$SHOT_COUNT" -gt 0 ]; then
     echo -e "${RED}[KO] $RDP_COUNT host(s) with RDP accessible - $SHOT_COUNT screenshot(s) → rdp/${NC}"
   else
     rm -rf "$OUTPUT_DIR/rdp"
-    echo -e "${RED}[KO] $RDP_COUNT host(s) with RDP exposed → accessible-rdp.txt${NC}"
-    echo -e "${GREY}       └─ cd '$OUTPUT_DIR/rdp' && nxc rdp ${SCAN_TARGETS_STR} -u '$AD_USER' -p '$PASSWORD' -d '$DOMAIN' --screenshot${NC}"
+    echo -e "${RED}[KO] $RDP_COUNT host(s) with RDP exposed (no screenshots - NLA without full session) → rdp.txt${NC}"
   fi
 else
   rm -rf "$OUTPUT_DIR/rdp"
