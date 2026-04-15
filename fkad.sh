@@ -246,7 +246,7 @@ else
 fi
 
 # RODC
-RODC_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))" sAMAccountName dNSHostName msDS-RevealOnDemandGroup msDS-NeverRevealGroup 2>/dev/null)
+RODC_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864)(!(cn=AzureADKerberos)))" sAMAccountName dNSHostName msDS-RevealOnDemandGroup msDS-NeverRevealGroup 2>/dev/null)
 RODC_COUNT=$(echo "$RODC_OUTPUT" | grep -c "^sAMAccountName:")
 if [ "$RODC_COUNT" -gt 0 ]; then
   > "$OUTPUT_DIR/all_rodcs.txt"
@@ -254,9 +254,9 @@ if [ "$RODC_COUNT" -gt 0 ]; then
     echo "${sam}:${dns}" >> "$OUTPUT_DIR/all_rodcs.txt"
   done
   echo -e "${GREEN}[OK] Found $RODC_COUNT RODC(s) → all_rodcs.txt${NC}"
-  PRIVILEGED_CACHED=$(echo "$RODC_OUTPUT" | grep -i "msDS-RevealOnDemandGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt|Domain Users|Authenticated Users")  NEVER_REVEAL=$(echo "$RODC_OUTPUT" | grep -i "msDS-NeverRevealGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt")
-  if [ ! -z "$PRIVILEGED_CACHED" ] && [ -z "$NEVER_REVEAL" ]; then
-    echo -e "${RED}       └─ RODC credential caching — privileged accounts in RevealOnDemandGroup${NC}"
+  PRIVILEGED_CACHED=$(echo "$RODC_OUTPUT" | grep -i "msDS-RevealOnDemandGroup:" | grep -iE "Domain Users|Authenticated Users|Everyone")
+  if [ ! -z "$PRIVILEGED_CACHED" ]; then
+    echo -e "${RED}       └─ RODC credential caching — overly broad RevealOnDemandGroup${NC}"
     echo "$PRIVILEGED_CACHED" | while read -r line; do
       echo -e "${RED}          └─ $line${NC}"
     done
