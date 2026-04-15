@@ -209,7 +209,7 @@ try {
     } elseif ($cgEnabled -eq 1) {
         Write-Host "          - Credential Guard: VBS enabled but scenario not confirmed" -ForegroundColor DarkYellow
     } else {
-        Write-Host "          - [P050] Credential Guard is not enabled - Mimikatz sekurlsa::logonpasswords likely works" -ForegroundColor DarkRed
+        Write-Host "          - [P050] Credential Guard is not enabled - Kadse likely works" -ForegroundColor DarkRed
     }
 } catch {
     Write-Host "          - Credential Guard status could not be determined" -ForegroundColor DarkYellow
