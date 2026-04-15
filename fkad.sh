@@ -254,8 +254,7 @@ if [ "$RODC_COUNT" -gt 0 ]; then
     echo "${sam}:${dns}" >> "$OUTPUT_DIR/all_rodcs.txt"
   done
   echo -e "${GREEN}[OK] Found $RODC_COUNT RODC(s) → all_rodcs.txt${NC}"
-  PRIVILEGED_CACHED=$(echo "$RODC_OUTPUT" | grep -i "msDS-RevealOnDemandGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt")
-  NEVER_REVEAL=$(echo "$RODC_OUTPUT" | grep -i "msDS-NeverRevealGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt")
+  PRIVILEGED_CACHED=$(echo "$RODC_OUTPUT" | grep -i "msDS-RevealOnDemandGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt|Domain Users|Authenticated Users")  NEVER_REVEAL=$(echo "$RODC_OUTPUT" | grep -i "msDS-NeverRevealGroup:" | grep -iE "Domain Admins|Enterprise Admins|Administrator|krbtgt")
   if [ ! -z "$PRIVILEGED_CACHED" ] && [ -z "$NEVER_REVEAL" ]; then
     echo -e "${RED}       └─ RODC credential caching — privileged accounts in RevealOnDemandGroup${NC}"
     echo "$PRIVILEGED_CACHED" | while read -r line; do
