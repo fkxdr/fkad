@@ -1197,6 +1197,7 @@ PRE2K_DEFAULT_PASS_OUTPUT=$(nxc ldap $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DO
 if echo "$PRE2K_DEFAULT_PASS_OUTPUT" | grep -q "Found.*pre-created computer accounts"; then
   echo -e "${RED}[KO] Computer account(s) with Pre-Windows 2000 default password still set → pre2k_default_pass.txt${NC}"
   echo "$PRE2K_DEFAULT_PASS_OUTPUT" | grep "Pre-created computer account\|Found.*pre-created" > "$OUTPUT_DIR/pre2k_default_pass.txt"
+  echo -e "${GREY}       └─ while read -r a; do p=\$(echo \"\${a%\$}\" | tr '[:upper:]' '[:lower:]'); nxc smb $DC_IP -u \"\$a\" -p \"\$p\" -d $DOMAIN 2>/dev/null | grep -q '\[+\]' && echo \"[HIT] \$a:\$p\"; done < <(grep 'Pre-created' '$OUTPUT_DIR/pre2k_default_pass.txt' | awk '{print \$NF}')${NC}"
 else
   echo -e "${GREEN}[OK] No computer accounts with Pre-Windows 2000 default password${NC}"
 fi
@@ -1809,8 +1810,8 @@ if [ "$BH_MODE" != "DCOnly" ]; then
       done
 
       # Manspider SYSVOL
-      timeout 60 $MANSPIDER_CMD $DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --share SYSVOL -c passw secret credential token apikey username connectionstring pwd admin login logon cred -e txt xml ini config conf csv bat ps1 vbs -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"
-      cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
+      FIRST_DC_IP=$(awk -F: 'NR==1{print $2}' "$OUTPUT_DIR/all_dcs.txt")
+      timeout 60 $MANSPIDER_CMD $FIRST_DC_IP -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --share SYSVOL -c passw secret credential token apikey username connectionstring pwd admin login logon cred -e txt xml ini config conf csv bat ps1 vbs -s 5M 2>&1 | grep "matched" >> "$OUTPUT_DIR/manspider/manspider.txt"      cp -r /root/.manspider/loot/. "$OUTPUT_DIR/manspider/loot/" 2>/dev/null
       SPIDER_COUNT=0
       [ -f "$OUTPUT_DIR/manspider/manspider.txt" ] && SPIDER_COUNT=$(grep -c "matched" "$OUTPUT_DIR/manspider/manspider.txt" | tr -d ' \n')
       if [ "$SPIDER_COUNT" -gt 0 ]; then
