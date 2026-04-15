@@ -1848,23 +1848,21 @@ else
   echo -e "${GREEN}[OK] No accessible MSSQL instances found on ${SUBNET}.0/24${NC}"
 fi
 
-# RDP 
+# RDP
 echo ""
+mkdir -p "$OUTPUT_DIR/rdp"
+cd "$OUTPUT_DIR/rdp"
 RDP_OUTPUT=""
 for target in "${SCAN_TARGETS[@]}"; do
-  RDP_OUTPUT+=$(nxc rdp "$target" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" 2>/dev/null)$'\n'
+  RDP_OUTPUT+=$(nxc rdp "$target" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --screenshot 2>/dev/null)$'\n'
 done
+cd "$CURRENT_PATH"
+
 RDP_ACCESSIBLE=$(echo "$RDP_OUTPUT" | grep "\[+\]" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
 RDP_COUNT=$(echo "$RDP_ACCESSIBLE" | grep -v "^$" | wc -l)
 if [ "$RDP_COUNT" -gt 0 ]; then
-  mkdir -p "$OUTPUT_DIR/rdp"
-  cd "$OUTPUT_DIR/rdp"
-  for target in "${SCAN_TARGETS[@]}"; do
-    nxc rdp "$target" -u "$AD_USER" -p "$PASSWORD" -d "$DOMAIN" --screenshot 2>/dev/null
-  done
-  cd "$CURRENT_PATH"
-  SHOT_COUNT=$(ls "$OUTPUT_DIR/rdp/"*.png 2>/dev/null | wc -l)
   echo "$RDP_OUTPUT" | grep "\[+\]" > "$OUTPUT_DIR/accessible-rdp.txt"
+  SHOT_COUNT=$(ls "$OUTPUT_DIR/rdp/"*.png 2>/dev/null | wc -l)
   if [ "$SHOT_COUNT" -gt 0 ]; then
     echo -e "${RED}[KO] $RDP_COUNT host(s) with RDP accessible - $SHOT_COUNT screenshot(s) → rdp/${NC}"
   else
@@ -1873,6 +1871,7 @@ if [ "$RDP_COUNT" -gt 0 ]; then
     echo -e "${GREY}       └─ cd '$OUTPUT_DIR/rdp' && nxc rdp ${SCAN_TARGETS_STR} -u '$AD_USER' -p '$PASSWORD' -d '$DOMAIN' --screenshot${NC}"
   fi
 else
+  rm -rf "$OUTPUT_DIR/rdp"
   echo -e "${GREEN}[OK] No RDP hosts accessible${NC}"
 fi
 
