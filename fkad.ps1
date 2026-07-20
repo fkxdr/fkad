@@ -1168,43 +1168,26 @@ if ($macroFindings.Count -gt 0) {
 Write-Host ""
 
 # MSSQL Enum
+# MSSQL Enum
 function sql-Q {
-    param(
-        [string]$I,
-        [string]$Q,
-        [string]$D = "master"
-    )
-
+    param([string]$I, [string]$Q, [string]$D = "master")
     try {
-        $c = New-Object System.Data.SqlClient.SqlConnection `
-            "Server=$I;Database=$D;Integrated Security=SSPI;Connect Timeout=5;Encrypt=False;TrustServerCertificate=True;"
-
-        $c.Open()
-
-        $cmd = $c.CreateCommand()
-        $cmd.CommandText = $Q
-        $cmd.CommandTimeout = 5
-
+        $c = New-Object System.Data.SqlClient.SqlConnection "Server=$I;Database=$D;Integrated Security=SSPI;Connect Timeout=5;Encrypt=False;TrustServerCertificate=True;"
+        $c.Open(); $cmd = $c.CreateCommand(); $cmd.CommandText = $Q; $cmd.CommandTimeout = 5
         $da = New-Object System.Data.SqlClient.SqlDataAdapter $cmd
-        $ds = New-Object System.Data.DataSet
-
-        $null = $da.Fill($ds)
-        $c.Close()
-
-        if (
-            $ds.Tables.Count -gt 0 -and
-            $ds.Tables[0].Rows.Count -gt 0
-        ) {
-            # Prevent PowerShell from unrolling the DataTable into DataRow objects
-            return ,$ds.Tables[0]
-        }
-    }
-    catch {
-        if ($c -and $c.State -eq 'Open') {
-            $c.Close()
-        }
-    }
-
+        $ds = New-Object System.Data.DataSet; $null = $da.Fill($ds); $c.Close()
+        if ($ds.Tables.Count -gt 0 -and $ds.Tables[0].Rows.Count -gt 0) { return ,$ds.Tables[0] }
+    } catch { }
+    return $null
+}
+function sql-X {
+    param([string]$I, [string]$Q, [string]$D = "master")
+    try {
+        $c = New-Object System.Data.SqlClient.SqlConnection "Server=$I;Database=$D;Integrated Security=SSPI;Connect Timeout=5;Encrypt=False;TrustServerCertificate=True;"
+        $c.Open(); $cmd = $c.CreateCommand(); $cmd.CommandText = $Q; $cmd.CommandTimeout = 5
+        $null = $cmd.ExecuteNonQuery(); $c.Close(); return $true
+    } catch { return $false }
+}
     return $null
 }
 function sql-X {
