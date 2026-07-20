@@ -506,10 +506,10 @@ try {
 }
 
 # GPO ACL Check (AD level)
+# GPO ACL Check (AD level)
 if (-not $isDomainJoined) {
     Write-Host "[ -- ]   GPO ACL check skipped (not domain-joined)" -ForegroundColor DarkGray
-    } else {
-    $nonAdminExclusions = @("Admin", "SYSTEM", "Administrators", "ERSTELLER-BESITZER", "Creator Owner")
+} else {
     try {
         $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
         $DN = "DC=" + ($domain.Name -replace "\.", ",DC=")
@@ -518,27 +518,114 @@ if (-not $isDomainJoined) {
         $searcher.Filter = "(objectClass=groupPolicyContainer)"
         $searcher.PropertiesToLoad.AddRange(@("displayName", "nTSecurityDescriptor", "cn"))
         $searcher.SearchScope = "OneLevel"
+        $searcher.PageSize = 1000
         $results = $searcher.FindAll()
+
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $currentSids = @($identity.User.Value)
+        $currentSids += @($identity.Groups | ForEach-Object { $_.Value })
+
         $gpoFindings = @()
+        $gpoReviews = @()
+
         foreach ($result in $results) {
-            $gpoName = $result.Properties["displayName"][0]
+            $gpoName = if ($result.Properties["displayName"].Count -gt 0) {
+                $result.Properties["displayName"][0]
+            } else {
+                $result.Properties["cn"][0]
+            }
+
             $acl = $result.GetDirectoryEntry().ObjectSecurity
-            foreach ($ace in $acl.Access) {
-                $trustee = $ace.IdentityReference.ToString()
-                $rights = $ace.ActiveDirectoryRights.ToString()
-                $isAdmin = $nonAdminExclusions | Where-Object { $trustee -match $_ }
-                if ($rights -match "WriteProperty|WriteDacl|WriteOwner|GenericWrite|GenericAll" -and -not $isAdmin) {
-                    $gpoFindings += [PSCustomObject]@{ GPO = $gpoName; Trustee = $trustee; Rights = $rights }
+            $aces = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+
+            foreach ($ace in $aces) {
+                if ($ace.AccessControlType -ne "Allow") {
+                    continue
+                }
+
+                $rights = $ace.ActiveDirectoryRights
+
+                $hasWrite = (
+                    (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty) -eq [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty) -or
+                    (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl) -eq [System.DirectoryServices.ActiveDirectoryRights]::WriteDacl) -or
+                    (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner) -eq [System.DirectoryServices.ActiveDirectoryRights]::WriteOwner) -or
+                    (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::CreateChild) -eq [System.DirectoryServices.ActiveDirectoryRights]::CreateChild) -or
+                    (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::DeleteChild) -eq [System.DirectoryServices.ActiveDirectoryRights]::DeleteChild) -or
+                    (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::Delete) -eq [System.DirectoryServices.ActiveDirectoryRights]::Delete) -or
+                    (($rights -band [System.DirectoryServices.ActiveDirectoryRights]::DeleteTree) -eq [System.DirectoryServices.ActiveDirectoryRights]::DeleteTree)
+                )
+
+                if (-not $hasWrite) {
+                    continue
+                }
+
+                $sid = $ace.IdentityReference.Value
+
+                try {
+                    $trustee = $ace.IdentityReference.Translate([System.Security.Principal.NTAccount]).Value
+                } catch {
+                    $trustee = $sid
+                }
+
+                $isDefaultAdmin = (
+                    $sid -eq "S-1-5-18" -or          # SYSTEM
+                    $sid -eq "S-1-5-32-544" -or      # Administrators
+                    $sid -eq "S-1-3-0" -or           # Creator Owner
+                    $sid -match "-512$" -or           # Domain Admins
+                    $sid -match "-518$" -or           # Schema Admins
+                    $sid -match "-519$" -or           # Enterprise Admins
+                    $sid -match "-520$"               # Group Policy Creator Owners
+                )
+
+                if ($isDefaultAdmin) {
+                    continue
+                }
+
+                $record = [PSCustomObject]@{
+                    GPO         = $gpoName
+                    Trustee     = $trustee
+                    SID         = $sid
+                    Rights      = $rights
+                    IsInherited = $ace.IsInherited
+                    ObjectType  = $ace.ObjectType
+                }
+
+                if ($currentSids -contains $sid) {
+                    $gpoFindings += $record
+                } else {
+                    $gpoReviews += $record
                 }
             }
         }
+
         if ($gpoFindings.Count -gt 0) {
-            Write-Host "[P120]   $($gpoFindings.Count) GPO(s) with non-admin write permissions" -ForegroundColor DarkRed
+            $affectedGpos = @($gpoFindings.GPO | Sort-Object -Unique).Count
+            Write-Host "[P120]   Current user has write permissions on $affectedGpos GPO(s)" -ForegroundColor DarkRed
+
             foreach ($f in $gpoFindings) {
-                Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Rights))" -ForegroundColor DarkRed
+                Write-Host "          - '$($f.GPO)' via $($f.Trustee) ($($f.Rights))" -ForegroundColor DarkRed
             }
+
+            $gpoFindings |
+                Sort-Object GPO, Trustee |
+                Out-File "$OUT\gpo_current_user_write_permissions.txt" -Encoding utf8
         } else {
-            Write-Host "[ OK ]   no non-admin GPO write permissions found" -ForegroundColor Green
+            Write-Host "[ OK ]   Current user has no GPO write permissions" -ForegroundColor Green
+        }
+
+        if ($gpoReviews.Count -gt 0) {
+            $reviewGpos = @($gpoReviews.GPO | Sort-Object -Unique).Count
+            Write-Host "[R120]   $($gpoReviews.Count) delegated write permission(s) on $reviewGpos GPO(s) require review" -ForegroundColor DarkYellow
+
+            foreach ($f in $gpoReviews) {
+                Write-Host "          - '$($f.GPO)' - $($f.Trustee) ($($f.Rights))" -ForegroundColor DarkGray
+            }
+
+            $gpoReviews |
+                Sort-Object GPO, Trustee |
+                Out-File "$OUT\gpo_delegated_write_permissions.txt" -Encoding utf8
+        } else {
+            Write-Host "          - No non-default GPO delegations found" -ForegroundColor DarkGray
         }
     } catch {
         Write-Host "[ -- ]   GPO ACL check failed: $_" -ForegroundColor DarkYellow
