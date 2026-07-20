@@ -1175,7 +1175,7 @@ function sql-Q {
         $c.Open(); $cmd = $c.CreateCommand(); $cmd.CommandText = $Q; $cmd.CommandTimeout = 5
         $da = New-Object System.Data.SqlClient.SqlDataAdapter $cmd
         $ds = New-Object System.Data.DataSet; $null = $da.Fill($ds); $c.Close()
-        if ($ds.Tables.Count -gt 0) { return $ds.Tables[0] }
+        if ($ds.Tables.Count -gt 0 -and $ds.Tables[0].Rows.Count -gt 0) { return ,$ds.Tables[0] }
     } catch { }
     return $null
 }
