@@ -1,45 +1,15 @@
-# fkad
+# fkpc
 
 <img width="2525" height="385" alt="366097681-8fa1fc4b-43c1-4789-8184-0138bd81d0b1" src="https://github.com/user-attachments/assets/11c9fe22-c113-4a4f-a8df-45c839aa54cf" />
 
-`fkad` is a custom offensive helper kit designed for exegol containers. It automates common and mundane enumeration tasks, executes sanity checks and prepares artifacts for follow-up exploiting. 
-
-## Quick install & run
-
-```bash
-wget https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.sh
-chmod +x fkad.sh
-./fkad.sh -u <user> -p '<password>' -d <dc-ip/domain.com>
-```
-
-<img width="1819" height="1122" alt="image" src="https://github.com/user-attachments/assets/49617e19-a7ad-48df-b2d8-b2d5e5f595e0" />
-
-Example:
-
-```bash
-./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com
-./fkad.sh -u pentest1 -p 'Pentestpassword123' -d 10.10.2.13 -scope scope.txt
-./fkad.sh -u pentest1 -p 'Pentestpassword123' -d domain.com -fast
-```
-
-> [!NOTE]
-> The -fast flag limits extensive bloodhound checks in AD environments with many stale or dead objects, while the -scope flag allows the usage of a scoping file.txt with additional CIDR ranges (one per line) to extend network scans beyond the primary subnet.
-
-## Follow-Up Enumeration
-
-For most assessments it makes sense to follow up enumeration on a provided device. 
+`fkpc` is a custom offensive helper kit designed for windows machines. It automates common and mundane enumeration tasks, executes sanity checks and prepares artifacts for follow-up exploiting. 
 
 ```ps
-wget https://raw.githubusercontent.com/fkxdr/fkad/refs/heads/main/fkad.ps1
-powershell -ExecutionPolicy Bypass -File fkad.ps1
+wget https://raw.githubusercontent.com/fkxdr/fkpc/refs/heads/main/fkpc.ps1
+powershell -ExecutionPolicy Bypass -File fkpc.ps1
 ```
 
 <img width="1866" height="1052" alt="image" src="https://github.com/user-attachments/assets/e8d43abc-e297-428b-91f1-3ff7d63660e4" />
-
-Most likely these should be run across the network as well.
-
-- [ ] Nessus
-- [ ] Responder
 
 ## Security / Legal
 
